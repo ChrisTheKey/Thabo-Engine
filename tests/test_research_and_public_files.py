@@ -33,6 +33,17 @@ class ResearchTest(unittest.TestCase):
         self.assertEqual(s["review_status"], "ungeprüft")
         self.assertIn("manuell prüfen", s["geo_evidence"])
 
+    def test_short_post_stores_only_topic_sentence_and_keeps_provider_verdict(self):
+        from lead_generation_ch_consumer.leads import prepare_signals
+        post = ("Mein Mann ist gerade krank, geboren 12.03.1985. Was kostet eine persönliche Numerologie Analyse? "
+                "Jetzt bei @anbieterin.bsky.social buchen!")
+        s = research.extract_signal("https://a.example.invalid/p/1", post)
+        self.assertEqual(s["product_fit"], "Anbieter/Werbung")
+        self.assertNotIn("krank", s["need_summary"])  # non-topic sentence not stored
+        ok, _ = prepare_signals([s])
+        self.assertEqual((ok[0]["score"], ok[0]["product_fit"]), (5, "Anbieter/Werbung"))  # sticky after re-scoring
+        self.assertEqual(research.anonymize("geb. 12.03.1985, @name.bsky.social"), "geb. [Datum], […]")
+
     def test_robots_and_dedupe(self):
         robots_ok = "User-agent: *\nAllow: /\n"
         pages = {

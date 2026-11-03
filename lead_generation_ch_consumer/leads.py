@@ -101,6 +101,10 @@ def score_signal(text):
     return score, reasons + [r]
 
 
+STICKY = {"Anbieter/Werbung": (5, ["Numerologie-Bezug", "Anbieter/Werbung, kein Käufer"]),
+          "Nachrichten/Unterhaltung": (15, ["Numerologie-Bezug", "Nachrichten/Unterhaltung"])}
+
+
 def signal_category(score):
     """Category for the research overview; derived from score_signal's fixed tiers."""
     if score >= 70:
@@ -133,6 +137,9 @@ def prepare_signals(signals):
             bad.append((s, errs))
             continue
         score, reasons = score_signal(s.get("need_summary", ""))
+        # A provider/news verdict from the whole post outlives re-scoring of the stored sentence alone.
+        if s.get("product_fit") in STICKY:
+            score, reasons = STICKY[s["product_fit"]]
         ok.append({**s, "score": score, "score_reasons": "; ".join(reasons)})
     return ok, bad
 
