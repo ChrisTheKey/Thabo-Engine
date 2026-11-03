@@ -26,9 +26,38 @@ class SearchChError(Exception):
     pass
 
 
-def load_api_key(env_file=Path(__file__).with_name(".env")):
-    """Read SEARCH_CH_API_KEY from the environment, else from the git-ignored .env."""
+# Written by the PowerShell command in the README (ConvertFrom-SecureString = DPAPI, current Windows user).
+DPAPI_FILE = Path(os.environ.get("APPDATA", Path.home())) / "ThaboEngine" / "search_ch_key.dpapi"
+
+
+def _dpapi_unprotect(blob):
+    import ctypes
+    from ctypes import wintypes
+
+    class Blob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    buf = ctypes.create_string_buffer(blob, len(blob))
+    src, out = Blob(len(blob), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char))), Blob()
+    if not ctypes.windll.crypt32.CryptUnprotectData(ctypes.byref(src), None, None, None, None, 0,
+                                                    ctypes.byref(out)):
+        raise SearchChError("DPAPI-Entschlüsselung fehlgeschlagen (anderes Windows-Konto?)")
+    try:
+        return ctypes.string_at(out.pbData, out.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+        ctypes.windll.kernel32.LocalFree(ctypes.cast(out.pbData, ctypes.c_void_p))
+
+
+def load_api_key(env_file=Path(__file__).with_name(".env"), dpapi_file=DPAPI_FILE):
+    """SEARCH_CH_API_KEY from the environment, else the DPAPI file, else the git-ignored .env."""
     key = os.environ.get("SEARCH_CH_API_KEY", "").strip()
+    if not key and os.name == "nt" and Path(dpapi_file).is_file():
+        hexblob = Path(dpapi_file).read_text(encoding="utf-8-sig").strip()
+        try:
+            key = _dpapi_unprotect(bytes.fromhex(hexblob)).decode("utf-16-le").strip()
+        except ValueError:
+            raise SearchChError("DPAPI-Datei ist beschädigt") from None
     if not key and Path(env_file).is_file():
         for line in Path(env_file).read_text(encoding="utf-8").splitlines():
             name, _, value = line.partition("=")
