@@ -166,7 +166,7 @@ Eine Direktnachricht wäre eine unaufgeforderte Werbebotschaft, und ein Abgleich
 
 ## Lead-Sync-Dienst (TF-NUMEROLOGY-009)
 
-Ein versteckter Hintergrundprozess läuft ohne Claude Code und ohne Admin-Rechte. Er übernimmt einmal pro Stunde die Opt-in-Leads aus der Lead-Datenbank. Quelle ist PythonAnywhere, wenn `PA_USERNAME` und `PA_API_TOKEN` in `lead_generation_ch_consumer/.env` stehen (gleicher Download wie beim Backup), sonst die lokale DB in `THABO_DATA_DIR`. Der Dienst durchsucht nicht das Web und fragt search.ch nicht ab. Kontaktierbar sind nur Personen, die ihre Daten und ihre Einwilligung selbst eingegeben haben.
+Ein versteckter Hintergrundprozess läuft ohne Claude Code und ohne Admin-Rechte. Er übernimmt einmal pro Stunde die Opt-in-Leads aus der Lead-Datenbank. Quelle ist PythonAnywhere, wenn `PA_USERNAME` und `PA_API_TOKEN` in `lead_generation_ch_consumer/.env` stehen (gleicher Download wie beim Backup), sonst die lokale DB in `THABO_DATA_DIR`. Seit TF-NUMEROLOGY-010 recherchiert er zusätzlich in öffentlichen Feeds (siehe unten), fragt aber search.ch nie ab. Kontaktierbar sind nur Personen, die ihre Daten und ihre Einwilligung selbst eingegeben haben.
 
 ```powershell
 .\lead_generation_ch_consumer\leadsync.ps1 START -AtLogon   # starten; -AtLogon startet den Dienst nach jedem Login neu (optional)
@@ -185,6 +185,35 @@ Ein versteckter Hintergrundprozess läuft ohne Claude Code und ohne Admin-Rechte
   - nicht gesperrt
 - `crm_import.csv` ist der bestehende CRM-Export. Er wird im CRM über **CSV importieren** geladen. Das CRM speichert im Browser, deshalb kann der Dienst es nicht direkt befüllen.
 - `zyklen.log` enthält eine Zeile pro Zyklus, ohne Personendaten.
+- `quellen.txt` listet die RSS/Atom-Feeds für die Recherche. Du pflegst sie selbst. Trag nur Quellen ein, deren Nutzungsbedingungen du geprüft hast.
+- `recherche_signale.csv` enthält anonyme Interessenssignale. Sie sind nie Leads und kommen nie ins CRM.
+- `recherche_letzter_zyklus.txt` zeigt pro Quelle, ob sie gelesen oder übersprungen wurde, und warum.
+
+### Anrufstatus (`Darf angerufen werden`)
+
+Die Einwilligung im Formular gilt nur für den Kanal, den die Person selbst gewählt hat. Daraus folgt:
+
+| Status | Bedingung |
+|---|---|
+| **JA** | Kontaktberechtigung erteilt, Kanal Telefon gewählt, Nummer angegeben |
+| **NEIN** | Widerruf oder Sperre, keine Nummer, oder Einwilligung nur für E-Mail |
+| **UNGEKLÄRT** | Kanal unbekannt. Wird nie automatisch zu JA |
+
+Eine search.ch-Prüfung auf Sterneintrag ist bei einer ausdrücklichen Einwilligung für den Telefonkanal nicht massgebend und wird deshalb nicht gemacht. Das CRM hat keine eigene Spalte für den Anrufstatus. Der Status steht deshalb am Anfang der Notizen („Anruf: JA (…)“).
+
+### Internet-Recherche – Befund (TF-NUMEROLOGY-010, 03.11.2026)
+
+Der Dienst liest pro Stunde jeden Feed aus `quellen.txt`, aber nur, wenn robots.txt den Abruf erlaubt. Die Beiträge durchlaufen `research.collect`: robots.txt wird nochmals geprüft, Kontaktdaten werden entfernt, der Inhalt wird bewertet. Pro Feed werden höchstens 20 Beiträge gelesen, mit 2 s Pause dazwischen.
+
+Ergebnis des ersten echten Zyklus: **5 Quellen, alle 5 übersprungen.**
+
+- robots.txt verbietet den Abruf: gutefrage.net, Reddit, astrologie-forum.de, paranormal.de
+- esoterikforum.at sperrt Bots (HTTP 403)
+- esoterik-forum.de existiert nicht mehr (HTTP 410)
+
+Daraus ergeben sich 0 Signale und 0 Leads.
+
+**Blocker:** Es gibt keine deutschsprachige Numerologie-Quelle, die einen automatisierten Abruf erlaubt. Selbst wenn es eine gäbe: Öffentliche Beiträge sind pseudonym und liefern nur anonyme Signale. Name und Kontaktdaten über search.ch zu ergänzen, wäre die verbotene Verknüpfung von Verzeichnisdaten mit Interessensprofilen.
 
 Beide CSVs werden in jedem Zyklus vollständig und atomar aus der Datenbank neu geschrieben. Dadurch:
 
