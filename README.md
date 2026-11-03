@@ -164,6 +164,41 @@ Eine Direktnachricht wäre eine unaufgeforderte Werbebotschaft, und ein Abgleich
 
 **Schluss:** Öffentliche Signale belegen Nachfrage. Sie sind aber kein Weg zu kontaktierbaren Leads. Kontaktierbare Leads entstehen nur über das Opt-in-Formular (PR #1), sobald es live ist.
 
+## Lead-Sync-Dienst (TF-NUMEROLOGY-009)
+
+Ein versteckter Hintergrundprozess läuft ohne Claude Code und ohne Admin-Rechte. Er übernimmt einmal pro Stunde die Opt-in-Leads aus der Lead-Datenbank. Quelle ist PythonAnywhere, wenn `PA_USERNAME` und `PA_API_TOKEN` in `lead_generation_ch_consumer/.env` stehen (gleicher Download wie beim Backup), sonst die lokale DB in `THABO_DATA_DIR`. Der Dienst durchsucht nicht das Web und fragt search.ch nicht ab. Kontaktierbar sind nur Personen, die ihre Daten und ihre Einwilligung selbst eingegeben haben.
+
+```powershell
+.\lead_generation_ch_consumer\leadsync.ps1 START -AtLogon   # starten; -AtLogon startet den Dienst nach jedem Login neu (optional)
+.\lead_generation_ch_consumer\leadsync.ps1 STOP             # beendet den Prozess UND entfernt den Autostart
+.\lead_generation_ch_consumer\leadsync.ps1 STATUS           # tatsächlicher Prozesszustand und Autostart
+.\lead_generation_ch_consumer\leadsync.ps1 REPORT           # letzter Zyklus, Anzahl Leads, CSV-Pfad
+```
+
+**Lead-Sammelordner** (`Lead-Sammelordner/`): git-ignoriert, nur für das eigene Windows-Konto zugänglich (ACL). Der Ordner bleibt nach STOP erhalten.
+
+- `numerologie_leads.csv` enthält nur qualifizierte Leads:
+  - Name
+  - Telefon oder E-Mail (oder beides)
+  - Interessensnachweis
+  - erteilte Kontaktberechtigung
+  - nicht gesperrt
+- `crm_import.csv` ist der bestehende CRM-Export. Er wird im CRM über **CSV importieren** geladen. Das CRM speichert im Browser, deshalb kann der Dienst es nicht direkt befüllen.
+- `zyklen.log` enthält eine Zeile pro Zyklus, ohne Personendaten.
+
+Beide CSVs werden in jedem Zyklus vollständig und atomar aus der Datenbank neu geschrieben. Dadurch:
+
+- entstehen keine Dubletten und keine halben Zeilen,
+- verschwinden widerrufene Leads aus beiden Dateien,
+- enthalten CSV und CRM-Import denselben qualifizierten Bestand.
+
+Ein fehlgeschlagener Zyklus wird protokolliert, beendet den Dienst nicht und lässt die letzten guten Dateien stehen.
+
+**Einschränkungen:**
+
+- **Kein Neustart nach Absturz:** Die Aufgabenplanung ist ohne erhöhte Rechte gesperrt. Stürzt der Python-Prozess selbst ab, startet er deshalb erst beim nächsten Login oder START neu.
+- **Stand heute 0 Leads:** Das Formular ist nicht live. Ausserdem erhält ohne Double-Opt-in keine Adresse eine Kontaktberechtigung (siehe „Livegang-Status und Blocker“).
+
 ## Recht und Datenschutz
 
 Das Modul ist auf das revDSG und das UWG ausgelegt (Art. 3 Abs. 1 lit. o: Massenwerbung nur mit Einwilligung; lit. u: Sterneintrag beachten). Ausgeschlossen sind: automatische Werbeanrufe oder -mails, unaufgeforderte Direktnachrichten, Deanonymisierung, Kontaktdaten-Anreicherung und erfundene Leads oder Einwilligungen. Einwilligungsfelder in späteren Formularen dürfen nie vorangekreuzt sein.
