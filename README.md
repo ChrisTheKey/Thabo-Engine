@@ -112,6 +112,7 @@ Geprüft am 03.11.2026 anhand von https://search.ch/tel/api/help und https://sea
 Der Key wird mit DPAPI verschlüsselt ausserhalb des Repositorys gespeichert: `%APPDATA%\ThaboEngine\search_ch_key.dpapi`. Nur dasselbe Windows-Konto kann ihn entschlüsseln. In einer eigenen PowerShell eingeben, nicht im Chat. Die Eingabe bleibt verdeckt:
 
 ```powershell
+Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"  # nötig, wenn PowerShell 5.1 aus PowerShell 7 gestartet wurde
 $d = "$env:APPDATA\ThaboEngine"; New-Item -ItemType Directory -Force $d | Out-Null
 Read-Host -AsSecureString "search.ch API-Key" | ConvertFrom-SecureString | Set-Content -NoNewline -Encoding ascii "$d\search_ch_key.dpapi"
 ```
