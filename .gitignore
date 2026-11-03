@@ -10,6 +10,8 @@ data/
 !lead_generation_ch_consumer/templates/*.csv
 *.json
 *.xlsx
+*.sqlite3
+*.db
 
 # Python
 __pycache__/
