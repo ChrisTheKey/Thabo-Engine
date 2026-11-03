@@ -117,6 +117,30 @@ Geprüft am 03.11.2026 anhand von https://search.ch/tel/api/help und https://sea
    ```
 3. Verbindung testen: `python -m lead_generation_ch_consumer.search_ch_adapter`. Das ist eine einzelne `count_only`-Abfrage nach Bäckereien in Bern, ohne private Einträge. Der Key erscheint nie in Ausgaben. Achtung: Die API-Antwort selbst enthält den Key im `<id>`-Feld, deshalb das Roh-XML nie loggen.
 
+## Qualifizierte Leads aus Interessenssignalen – Befund (TF-NUMEROLOGY-006, 03.11.2026)
+
+Geprüft wurde dieser Ablauf: öffentliches Interessenssignal, dann Name und Telefon, dann search.ch-Werbesperre, dann CRM. Ergebnis:
+
+| | Anzahl |
+|---|---|
+| Qualifizierte Leads importiert | **0** |
+| Geprüfte Kandidaten | 0 (es gibt keine echten Signal- oder Lead-Daten) |
+| Ausgeschlossene Kandidaten | 0 |
+
+Deshalb wurde **kein** Import gebaut:
+
+- **Keine Identität:** Interessenssignale sind absichtlich anonym. Vorname, Nachname, Telefon und E-Mail liessen sich nur durch nachträgliches Suchen von Kontaktdaten ergänzen. Das ist ausgeschlossen (siehe „Recht und Datenschutz“).
+- **Vertrag:** search.ch verbietet den Aufbau von Adressdatenbanken (Ziff. 5.1, CHF 50 000 pro Verstoss). Telefondaten aus dem Verzeichnis im CRM zu speichern, ist genau das. Die Nutzung ist also **nicht** gedeckt.
+- **Fehlende Werbesperre ist keine Erlaubnis:** Ein fehlender Sterneintrag belegt weder Interesse noch eine Einwilligung. Für E-Mail-Werbung braucht es ohnehin eine Einwilligung (UWG Art. 3 Abs. 1 lit. o).
+- **Kein API-Key:** Auf dem Laptop ist kein search.ch-Key hinterlegt (`lead_generation_ch_consumer/.env` fehlt).
+
+Fehlende Berechtigungen, falls dieser Weg je verfolgt werden soll:
+
+1. eine schriftliche Erlaubnis der Swisscom Directories AG für die Speicherung im CRM und die kommerzielle Nutzung
+2. eine rechtliche Prüfung, ob Personen anhand öffentlicher Beiträge identifiziert werden dürfen
+
+Der zulässige Weg zu qualifizierten Leads ist das bestehende Opt-in-Formular (Datensatz B). Dort liefern die Personen Interesse, Kontaktdaten und Einwilligung selbst. Eine Prüfung der Werbesperre ist bei einer Einwilligung nicht nötig.
+
 ## Recht und Datenschutz
 
 Das Modul ist auf das revDSG und das UWG ausgelegt (Art. 3 Abs. 1 lit. o: Massenwerbung nur mit Einwilligung; lit. u: Sterneintrag beachten). Ausgeschlossen sind: automatische Werbeanrufe oder -mails, unaufgeforderte Direktnachrichten, Deanonymisierung, Kontaktdaten-Anreicherung und erfundene Leads oder Einwilligungen. Einwilligungsfelder in späteren Formularen dürfen nie vorangekreuzt sein.
