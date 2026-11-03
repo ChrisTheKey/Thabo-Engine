@@ -141,7 +141,8 @@ class CycleTest(unittest.TestCase):
 class ResearchTest(unittest.TestCase):
     """Fake web: host a allows bots and has a feed, host b forbids by robots.txt, host c answers 403."""
     RSS = ("<rss><channel><item><link>https://a.example.invalid/q/1</link></item>"
-           "<item><link>https://a.example.invalid/q/2</link></item></channel></rss>")
+           "<item><link>https://a.example.invalid/q/2</link></item>"
+           "<item><link>http://127.0.0.1:8080/admin</link></item></channel></rss>")  # off-host: must be ignored
     PAGES = {"https://a.example.invalid/q/1": "<p>Was kostet eine persönliche Numerologie Analyse? Mail: x@example.invalid</p>",
              "https://a.example.invalid/q/2": "<p>Ich suche jemanden für meine Lebenszahl Auswertung in Zürich.</p>"}
 
@@ -162,9 +163,16 @@ class ResearchTest(unittest.TestCase):
             self.assertEqual((n, len(new)), (3, 2))
             self.assertIn("robots.txt verbietet", status[1])
             self.assertIn("HTTP 403", status[2])
+            self.assertFalse(any("127.0.0.1" in s for s in status))  # off-host link never fetched
             raw = (folder / sync.SIGNALS_CSV).read_text(encoding="utf-8")
             self.assertNotIn("x@example.invalid", raw)  # contact data never stored
             self.assertEqual(sync.research_cycle(folder, self.fetch, delay=0)[1], [])  # no duplicates
+
+    def test_feed_with_entities_rejected(self):
+        bomb = '<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaa">]><rss><channel><item><link>&a;</link></item></channel></rss>'
+        with self.assertRaises(ValueError):
+            sync.feed_links(bomb)
+        self.assertEqual(len(sync.feed_links(self.RSS)), 3)  # parser returns all; research_cycle filters hosts
 
     def test_default_sources_file_created(self):
         with tempfile.TemporaryDirectory() as d:

@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
@@ -114,6 +115,9 @@ def _crm_rows(db):
 
 
 def feed_links(xml_text):
+    # Untrusted input: refuse DTDs/entities outright (no entity expansion), no new dependency needed.
+    if "<!DOCTYPE" in xml_text.upper() or "<!ENTITY" in xml_text.upper():
+        raise ValueError("Feed mit DTD/Entity abgelehnt")
     root = ET.fromstring(xml_text)
     atom = "{http://www.w3.org/2005/Atom}"
     links = [i.findtext("link", "") for i in root.iter("item")]
@@ -136,7 +140,11 @@ def research_cycle(folder=FOLDER, fetch=None, delay=2.0):
             status.append(f"übersprungen: robots.txt verbietet oder unklar | {src}")
             continue
         try:
-            found = feed_links(fetch(src))
+            # Feed content is untrusted: follow only links on the vetted feed's own host (no SSRF to LAN/localhost).
+            # shortcut: HTTP redirects inside research._fetch are not re-checked; add a no-redirect opener
+            # if a listed source ever turns out to redirect off-site.
+            host = urllib.parse.urlsplit(src).hostname
+            found = [u for u in feed_links(fetch(src)) if urllib.parse.urlsplit(u).hostname == host]
         except urllib.error.HTTPError as e:
             status.append(f"übersprungen: Server verweigert (HTTP {e.code}) | {src}")
             continue
