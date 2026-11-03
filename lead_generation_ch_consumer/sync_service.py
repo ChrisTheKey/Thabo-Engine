@@ -10,7 +10,8 @@ there are contactable. Both CSVs are rewritten atomically from the DB every cycl
 half rows, duplicates or leads that were revoked or deleted in the meantime.
 
 Research: RSS/Atom feeds listed in Lead-Sammelordner/quellen.txt. A feed is read only if robots.txt
-allows it; its item pages go through research.collect (robots again, anonymised, scored). Public posts
+allows it; the post texts inside the feed are scored and anonymised (research.extract_signal). Item
+pages are never fetched: fewer requests, works for JS-rendered sites, no SSRF via feed links. Public posts
 are pseudonymous, so research yields anonymous signals only, never leads; search.ch is not used, as
 looking up names from posts would join directory data with interest profiles.
 """
@@ -20,7 +21,6 @@ import sys
 import tempfile
 import time
 import urllib.error
-import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
@@ -39,13 +39,18 @@ LAST_RESEARCH = "recherche_letzter_zyklus.txt"
 LOG = "zyklen.log"
 FIELDS = ["Lead-ID", "Name", "Telefonnummer", "E-Mail-Adresse", "Interessensnachweis", "Quellen-URL",
           "Prüfdatum", "Kontaktberechtigung", "Darf angerufen werden", "Begründung Anrufstatus", "Kontaktstatus"]
-# German-language feeds checked on 2026-11-03; all currently refuse automated access (see README).
+# Checked 2026-11-03: the forum feeds refuse automated access, the fediverse hashtag feeds allow it (see README).
 DEFAULT_SOURCES = """# Ein RSS/Atom-Feed pro Zeile. Nur Quellen eintragen, deren Nutzungsbedingungen geprüft sind.
 https://www.gutefrage.net/tag/numerologie/rss
 https://www.reddit.com/r/Numerologie/new/.rss
 https://www.esoterikforum.at/forums/numerologie.98/index.rss
 https://www.astrologie-forum.de/rss
 https://www.paranormal.de/forum/external.php?type=RSS2
+# Fediverse-Hashtag-Feeds (robots.txt erlaubt, geprüft 2026-11-03)
+https://swiss.social/tags/numerologie.rss
+https://mastodon.social/tags/numerologie.rss
+https://mastodon.social/tags/lebenszahl.rss
+https://chaos.social/tags/numerologie.rss
 """
 FEED_ITEMS = 20  # per feed and cycle
 
@@ -114,19 +119,21 @@ def _crm_rows(db):
         store.db.close()
 
 
-def feed_links(xml_text):
+def feed_items(xml_text):
+    """(post URL, post HTML) pairs from an RSS or Atom feed."""
     # Untrusted input: refuse DTDs/entities outright (no entity expansion), no new dependency needed.
     if "<!DOCTYPE" in xml_text.upper() or "<!ENTITY" in xml_text.upper():
         raise ValueError("Feed mit DTD/Entity abgelehnt")
     root = ET.fromstring(xml_text)
     atom = "{http://www.w3.org/2005/Atom}"
-    links = [i.findtext("link", "") for i in root.iter("item")]
-    links += [l.get("href", "") for e in root.iter(atom + "entry") for l in e.findall(atom + "link")
-              if l.get("rel", "alternate") == "alternate"]
-    return [u.strip() for u in links if u.strip().startswith(("https://", "http://"))][:FEED_ITEMS]
+    items = [(i.findtext("link", ""), i.findtext("description", "")) for i in root.iter("item")]
+    for e in root.iter(atom + "entry"):
+        href = next((l.get("href", "") for l in e.findall(atom + "link") if l.get("rel", "alternate") == "alternate"), "")
+        items.append((href, e.findtext(atom + "content") or e.findtext(atom + "summary") or ""))
+    return [(u.strip(), d) for u, d in items if u.strip().startswith(("https://", "http://"))][:FEED_ITEMS]
 
 
-def research_cycle(folder=FOLDER, fetch=None, delay=2.0):
+def research_cycle(folder=FOLDER, fetch=None):
     """Returns (sources, new_signals, per-source status lines). Skipped sources are only logged."""
     fetch = fetch or research._fetch
     src_file = folder / SOURCES
@@ -134,30 +141,27 @@ def research_cycle(folder=FOLDER, fetch=None, delay=2.0):
         src_file.write_text(DEFAULT_SOURCES, encoding="utf-8")
     sources = [l.strip() for l in src_file.read_text(encoding="utf-8").splitlines()
                if l.strip() and not l.lstrip().startswith("#")]
-    status, links = [], []
+    status, found = [], []
     for src in sources:
         if not research.allowed_by_robots(src, fetch):
             status.append(f"übersprungen: robots.txt verbietet oder unklar | {src}")
             continue
         try:
-            # Feed content is untrusted: follow only links on the vetted feed's own host (no SSRF to LAN/localhost).
-            # shortcut: HTTP redirects inside research._fetch are not re-checked; add a no-redirect opener
-            # if a listed source ever turns out to redirect off-site.
-            host = urllib.parse.urlsplit(src).hostname
-            found = [u for u in feed_links(fetch(src)) if urllib.parse.urlsplit(u).hostname == host]
+            items = feed_items(fetch(src))
         except urllib.error.HTTPError as e:
             status.append(f"übersprungen: Server verweigert (HTTP {e.code}) | {src}")
             continue
         except Exception as e:
             status.append(f"übersprungen: {type(e).__name__} | {src}")
             continue
-        status.append(f"gelesen: {len(found)} Beiträge | {src}")
-        links += found
+        sigs = [s for s in (research.extract_signal(u, d) for u, d in items) if s]
+        # Counts only: post URLs can contain pseudonyms, so they are not written to the status file.
+        status.append(f"gelesen: {len(items)} Beiträge, {len(sigs)} mit Numerologie-Bezug | {src}")
+        found += sigs
     out = folder / SIGNALS_CSV
     existing = read_csv(out) if out.is_file() else []
     known = {s["source_url"] for s in existing}
-    new, page_log = research.collect([u for u in links if u not in known], fetch, delay)
-    status += [f"{st} | {u}" for u, st in page_log]
+    new, _ = prepare_signals([s for s in found if s["source_url"] not in known])
     merged, _ = prepare_signals(existing + new)  # dedupe by URL
     _replace(out, lambda p: write_csv(p, SIGNAL_FIELDS, merged))
     return len(sources), new, status
