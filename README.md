@@ -10,6 +10,9 @@ Lokales CRM für private Einzelkäufer persönlicher Numerologie-Reports (Fokus:
 |---|---|
 | `numerology-crm/index.html` | Einzeldatei-CRM. Die Daten bleiben im `localStorage` des Browsers. CSV-Import/-Export, JSON-Backup, Filter nach Kontaktfreigabe |
 | `lead_generation_ch_consumer/leads.py` | Validierung, Scoring, Deduplizierung, Kontaktfreigabe, CRM-CSV-Export |
+| `numerology-landing/` | Mobiloptimierte Landingpage mit Anfrageformular, Datenschutzhinweisen und Widerruf |
+| `lead_generation_ch_consumer/server.py` | Backend für die Landingpage: Validierung, Einwilligungsnachweis, Spam-Schutz, SQLite ausserhalb des Repos, CRM-Export |
+| `lead_generation_ch_consumer/research.py` | Sammelt anonyme öffentliche Kaufsignale aus vorgegebenen URLs (beachtet robots.txt) |
 | `lead_generation_ch_consumer/search_ch_adapter.py` | tel.search.ch-Adapter (nur Einzelabfragen, **keine Leadquelle**, siehe unten) |
 | `lead_generation_ch_consumer/templates/` | Leere CSV-Vorlagen `opt_in_leads.csv`, `public_intent_signals.csv` |
 | `tests/` | Unit-Tests, ausschliesslich mit synthetischen Daten |
@@ -26,6 +29,48 @@ python -m lead_generation_ch_consumer data    # -> data/crm_import.csv
 ```
 
 CRM: `numerology-crm/index.html` im Browser öffnen, dann **CSV importieren** und `data/crm_import.csv` wählen. Das CRM erkennt Dubletten selbst anhand von E-Mail und Telefon.
+
+### Landingpage lokal betreiben
+
+```bash
+python -m lead_generation_ch_consumer.server serve --port 8080   # http://127.0.0.1:8080/
+python -m lead_generation_ch_consumer.server export data/crm_import.csv
+```
+
+Die Daten liegen in `THABO_DATA_DIR`, standardmässig `~/.thabo-engine/leads.sqlite3`. Der Server verweigert den Start, wenn dieser Pfad innerhalb des Repositorys liegt.
+
+Den Export danach im CRM über **CSV importieren** laden. Der Import:
+
+- legt neue Leads an,
+- setzt bereits vorhandene Leads auf gesperrt (`GESPERRT`: Status Abgesagt, Kanal Keiner, keine Freigabe),
+- entfernt gelöschte Leads anhand der Lead-ID (`GELÖSCHT`).
+
+Nach jedem Widerruf oder jeder Löschung also neu exportieren und importieren. Meldet sich eine Person nach einem Widerruf erneut an, bleibt sie im CRM gesperrt, bis sie dort manuell freigegeben wird.
+
+**Ablauf Formular → CRM:**
+
+1. **Lead-ID:** wird zufällig vergeben (`TN-` + 12 Hex-Zeichen).
+2. **Validierung:** Pflichtfelder, E-Mail-Format, Telefon nur Schweizer Nummern (normalisiert auf `+41…`). Wer den Kanal Telefon wählt, muss eine Nummer angeben.
+3. **Einwilligung:** Pflicht ist ein aktiver Haken (JSON `true`) und die aktuelle `CONSENT_VERSION`. Gespeichert werden Text, Version und UTC-Zeitstempel. Ändert sich der Text, Version in `server.py` **und** `numerology-landing/app.js` erhöhen; ein Test prüft die Übereinstimmung.
+4. **Deduplizierung:** E-Mail ist eindeutig (Gross-/Kleinschreibung egal). Neue und doppelte Anfragen erhalten dieselbe Antwort, damit niemand herausfinden kann, ob eine Adresse gespeichert ist.
+5. **Status und Score:** neu = „Kontakt freiwillig angemeldet“ (CRM: Neu). Der Interessensscore steht in den CRM-Notizen.
+6. **Spam-Schutz:** Honeypot-Feld, Mindest-Ausfüllzeit 3 s, höchstens 5 Anfragen pro IP und Stunde (nur im Speicher, IPs werden nicht gespeichert), Body maximal 10 KB, nur `application/json`. Keine CORS-Header, daher sind fremde Origins blockiert.
+7. **Widerruf und Löschung:** Nach dem Absenden erhält die Person einen Widerrufscode; gespeichert wird nur dessen Hash. Mit dem Code kann sie unter `#widerruf` ihre Einwilligung widerrufen oder ihre Daten löschen. Bei einer Löschung bleibt nur die Lead-ID mit Zeitstempel.
+
+### Öffentliche Kaufsignale recherchieren
+
+```bash
+# urls.txt: öffentliche Beiträge, eine URL pro Zeile (z. B. Ergebnisse einer manuellen Suche)
+python -m lead_generation_ch_consumer.research urls.txt data/public_intent_signals.csv
+```
+
+So arbeitet das Modul:
+
+- Pro URL ein Abruf mit 2 s Pause. Nur wenn robots.txt es erlaubt; ist robots.txt nicht abrufbar, wird die Seite übersprungen.
+- Keine Logins, kein Crawling über die Liste hinaus.
+- Gespeichert wird der relevanteste Numerologie-Satz, anonymisiert (E-Mail, Telefon, @Handles entfernt), mit Score und Begründung.
+- Der Schweiz-Bezug ist nur ein Hinweis. Jedes Signal startet als `ungeprüft` und muss manuell kontrolliert werden.
+- Zusätzlich gelten die Nutzungsbedingungen der jeweiligen Plattform. Diese müssen **vor** dem Eintragen einer URL geprüft werden; das kann das Modul nicht.
 
 ## Zwei getrennte Datensätze
 
@@ -76,8 +121,60 @@ Geprüft am 03.11.2026 anhand von https://search.ch/tel/api/help und https://sea
 
 Das Modul ist auf das revDSG und das UWG ausgelegt (Art. 3 Abs. 1 lit. o: Massenwerbung nur mit Einwilligung; lit. u: Sterneintrag beachten). Ausgeschlossen sind: automatische Werbeanrufe oder -mails, unaufgeforderte Direktnachrichten, Deanonymisierung, Kontaktdaten-Anreicherung und erfundene Leads oder Einwilligungen. Einwilligungsfelder in späteren Formularen dürfen nie vorangekreuzt sein.
 
-## Offen
+## Hosting auf PythonAnywhere EU (vorbereitet, noch nicht live)
 
-- Automatisierte Recherche öffentlicher Kaufsignale (Quellenauswahl nach Nutzungsbedingungen) ist noch nicht implementiert. Ein Signal lässt sich bisher nur manuell in `data/public_intent_signals.csv` erfassen.
-- Opt-in-Formular bzw. Landingpage: noch nicht gebaut.
+Lokaler Server (`serve`) und PythonAnywhere (`deploy/pythonanywhere_wsgi.py` → `server.wsgi_app`) verwenden dieselbe Anfragelogik `server.respond()`. Beide setzen dieselben Sicherheits-Header (CSP, HSTS, `nosniff`, `DENY`, `no-referrer`).
+
+**Lead-Freigabe:** Die Lead-Erfassung ist serverseitig gesperrt, solange `THABO_LEADS_ENABLED` nicht genau `1` ist. Gesperrt bedeutet: `POST /api/lead` antwortet mit 503 und speichert nichts. `GET /health` meldet `{"ok": true, "leads_enabled": false}`, und die Landingpage sperrt dann das Formular. Widerruf und Löschung bleiben immer möglich. Die WSGI-Vorlage setzt standardmässig `0`.
+
+Einrichtung (kostenloser Beginner-Account, keine Zahlungsangaben nötig):
+
+1. **Anmeldung (manuell, nur durch den Betreiber):** Konto auf <https://eu.pythonanywhere.com/> anlegen bzw. sich anmelden. Für Backups unter *Account → API token* einen Token erzeugen und nur in die lokale, git-ignorierte Datei `lead_generation_ch_consumer/.env` eintragen (`PA_USERNAME=…`, `PA_API_TOKEN=…`).
+2. In einer *Bash console*: `git clone https://github.com/ChrisTheKey/Thabo-Engine.git ~/Thabo-Engine`
+3. *Web → Add a new web app → Manual configuration →* aktuelle Python-3-Version.
+4. Die WSGI-Datei (`/var/www/<user>_eu_pythonanywhere_com_wsgi.py`) vollständig durch den Inhalt von `deploy/pythonanywhere_wsgi.py` ersetzen. `THABO_LEADS_ENABLED` bleibt `0`.
+5. *Force HTTPS* aktivieren und *Reload* klicken. Danach prüfen: `https://<user>.eu.pythonanywhere.com/health` muss `"leads_enabled": false` melden.
+
+Die Lead-Daten liegen dort in `~/.thabo-engine/` und damit ausserhalb des Repositorys. Dieser Ordner wird nicht ausgeliefert.
+
+## Verschlüsseltes Backup
+
+Für das Backup werden gpg (bei Git for Windows enthalten) und ein eigenes Schlüsselpaar benötigt. Der private Schlüssel bleibt nur auf dem Laptop. Zum Verschlüsseln genügt der öffentliche Schlüssel, eine Passphrase ist dafür nicht nötig.
+
+```bash
+gpg --quick-generate-key "Thabo Backup <eigene-adresse>" default default never   # einmalig
+# in lead_generation_ch_consumer/.env: THABO_BACKUP_GPG_RECIPIENT=<eigene-adresse>
+python -m lead_generation_ch_consumer.backup pull                     # PythonAnywhere -> ~/Documents/ThaboBackups
+python -m lead_generation_ch_consumer.backup local ~/.thabo-engine/leads.sqlite3
+python -m lead_generation_ch_consumer.backup restore-test ~/Documents/ThaboBackups/leads-<datum>.sqlite3.gpg
+```
+
+So arbeitet das Backup:
+
+- Es prüft vor dem Verschlüsseln jede Kopie mit `integrity_check`. Ein unvollständiger Download wird bis zu dreimal wiederholt.
+- Es behält die letzten 12 Backups.
+- Es verweigert einen Backup-Ordner im Repository.
+- Unverschlüsselte Kopien liegen nur kurz in einem temporären Ordner.
+
+`restore-test` entschlüsselt ein Backup in einen temporären Ordner und prüft es. Es sollte nach jedem neuen Backup-Schlüssel und danach regelmässig laufen.
+
+## Livegang-Status und Blocker
+
+Stand: Nichts ist öffentlich bereitgestellt.
+
+| Voraussetzung | Status |
+|---|---|
+| Verantwortliche Person (voller Name) und Postadresse in den Datenschutzhinweisen | **fehlt** (Platzhalter in `numerology-landing/index.html`) |
+| Aufbewahrungsfrist | **fehlt** (Platzhalter) |
+| PythonAnywhere-Konto und Anmeldung | **fehlt** (Schritt 1 oben, nur manuell) |
+| Double-Opt-in per Bestätigungsmail | **fehlt**: Bis dahin wird jede Adresse im CRM-Export als `E-Mail UNBESTÄTIGT` ohne Kontaktfreigabe markiert |
+| Backup-Schlüssel erzeugt, erster `pull` und `restore-test` mit echtem Konto | offen |
+| Inhaltliche Prüfung der Produkttexte und des Preises | offen |
+| WSGI-Anbindung, Lead-Sperre, Sicherheits-Header, Backup mit Wiederherstellungstest | erledigt und getestet |
+
+`THABO_LEADS_ENABLED=1` darf erst gesetzt werden, wenn alle Zeilen mit **fehlt** erledigt sind. Bis dahin darf höchstens die Informationsseite mit gesperrtem Formular öffentlich sein.
+
+Hinweise für den Betrieb:
+
+- Hinter dem PythonAnywhere-Load-Balancer gilt das Rate-Limit pro echter Client-IP (`X-Real-IP`). IPs werden nicht gespeichert.
 - Das CRM speichert lokal im Browser. Für Teamzugriff braucht es Hosting mit Authentifizierung.

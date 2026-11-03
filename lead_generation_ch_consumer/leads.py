@@ -176,7 +176,7 @@ def to_crm_rows(opt_in_leads):
             "name": lead.get("name", "").strip() or "(ohne Namen)",
             "email": lead.get("email", ""),
             "phone": lead.get("phone", ""),
-            "location": "",
+            "location": lead.get("location", ""),
             "source": lead["signup_source"],
             "status": "Abgesagt" if blocked else PIPELINE_TO_CRM[lead["pipeline_status"]],
             "channel": lead["preferred_channel"] if allowed else "Keiner",
@@ -184,6 +184,6 @@ def to_crm_rows(opt_in_leads):
             "proof": (f"{lead['signup_source']} {lead['consent_at']}, Einwilligung "
                       f"v{lead['consent_version']}: {lead['request']}"),
             "permission": "true" if allowed else "false",
-            "notes": "GESPERRT: Einwilligung widerrufen / Widerspruch" if blocked else "",
+            "notes": "GESPERRT: Einwilligung widerrufen / Widerspruch" if blocked else lead.get("notes", ""),
         })
     return rows, rejected
