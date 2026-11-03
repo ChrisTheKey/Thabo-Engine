@@ -213,7 +213,41 @@ Ergebnis des ersten echten Zyklus: **5 Quellen, alle 5 übersprungen.**
 
 Daraus ergeben sich 0 Signale und 0 Leads.
 
-**Blocker:** Es gibt keine deutschsprachige Numerologie-Quelle, die einen automatisierten Abruf erlaubt. Selbst wenn es eine gäbe: Öffentliche Beiträge sind pseudonym und liefern nur anonyme Signale. Name und Kontaktdaten über search.ch zu ergänzen, wäre die verbotene Verknüpfung von Verzeichnisdaten mit Interessensprofilen.
+### Neue Quellen (TF-NUMEROLOGY-011, 03.11.2026)
+
+Geprüft wurden 12 weitere Quellen:
+
+| Quelle | Ergebnis |
+|---|---|
+| Hashtag-Feeds auf swiss.social, mastodon.social (#numerologie, #lebenszahl) und chaos.social | **nutzbar**: robots.txt erlaubt den Abruf, die Feeds sind öffentlich und für maschinellen Abruf gedacht |
+| #numerology auf mastodon.social | nutzbar, aber englisch, deshalb weggelassen |
+| mastodon.online, spirit-forum.de, astrologie.ch | robots.txt verbietet den Abruf |
+| feddit.org (HTTP 400), wer-weiss-was.de, esoterikforum.de (HTTP 404) | kein nutzbarer Feed |
+
+Seit 011 bewertet der Dienst den Beitragstext direkt im Feed und ruft keine Beitragsseiten mehr ab. Das hat drei Gründe:
+
+- Mastodon rendert die Seiten per JavaScript, im HTML steht kein Text.
+- Es entstehen weniger Anfragen.
+- Feed-Links können keine Anfragen ins Heimnetz auslösen (kein SSRF).
+
+Beitrags-URLs enthalten Pseudonyme und kommen deshalb nicht ins Statusprotokoll.
+
+Erster echter Zyklus (19:05):
+
+- 4 Feeds gelesen, 30 Beiträge, davon 16 mit Numerologie-Bezug
+- 12 eindeutige anonyme Signale: 11 mit Score 20 (allgemeines Thema), 1 mit Score 50
+- **0 mit Kaufabsicht (Score ab 70), 0 mit Schweiz-Bezug**
+
+Inhaltlich waren die Beiträge:
+
+- französische Buch- und Anbieterwerbung
+- rumänische und tschechische Nachrichten
+- ein Skeptiker-Podcast und ein kritischer Esoterik-Artikel
+- ein Werbebeitrag eines Tarot-Anbieters
+
+Kein Konto sucht einen persönlichen Report, und keines hat eine Kontakterlaubnis gegeben. Ergebnis: **0 Interessenten, 0 Leads.**
+
+**Blocker:** Es gibt keine deutschsprachige Numerologie-Quelle, die einen automatisierten Abruf erlaubt **und** Kaufinteressenten mit Kontakterlaubnis liefert. Die nutzbaren Fediverse-Feeds enthalten Anbieter, Skeptiker und Nachrichten. Selbst wenn es eine gäbe: Öffentliche Beiträge sind pseudonym und liefern nur anonyme Signale. Name und Kontaktdaten über search.ch zu ergänzen, wäre die verbotene Verknüpfung von Verzeichnisdaten mit Interessensprofilen.
 
 Beide CSVs werden in jedem Zyklus vollständig und atomar aus der Datenbank neu geschrieben. Dadurch:
 

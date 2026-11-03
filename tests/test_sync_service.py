@@ -140,44 +140,66 @@ class CycleTest(unittest.TestCase):
 
 class ResearchTest(unittest.TestCase):
     """Fake web: host a allows bots and has a feed, host b forbids by robots.txt, host c answers 403."""
-    RSS = ("<rss><channel><item><link>https://a.example.invalid/q/1</link></item>"
-           "<item><link>https://a.example.invalid/q/2</link></item>"
-           "<item><link>http://127.0.0.1:8080/admin</link></item></channel></rss>")  # off-host: must be ignored
-    PAGES = {"https://a.example.invalid/q/1": "<p>Was kostet eine persönliche Numerologie Analyse? Mail: x@example.invalid</p>",
-             "https://a.example.invalid/q/2": "<p>Ich suche jemanden für meine Lebenszahl Auswertung in Zürich.</p>"}
+    RSS = ("<rss><channel>"
+           "<item><link>https://a.example.invalid/q/1</link><description>&lt;p&gt;Was kostet eine persönliche "
+           "Numerologie Analyse? Mail: x@example.invalid&lt;/p&gt;</description></item>"
+           "<item><link>https://other.example.invalid/q/2</link><description>Ich suche jemanden für meine "
+           "Lebenszahl Auswertung in Zürich.</description></item>"
+           "<item><link>http://127.0.0.1:8080/admin</link><description>Kochrezept ohne Bezug.</description></item>"
+           "</channel></rss>")
+    ATOM = ('<feed xmlns="http://www.w3.org/2005/Atom"><entry><link rel="alternate" href="https://a.example.invalid/e/1"/>'
+            "<content>Numerologie Lebensweg Report gesucht, was kostet das?</content></entry></feed>")
+
+    def setUp(self):
+        self.calls = []
 
     def fetch(self, url):
+        self.calls.append(url)
         if url.endswith("/robots.txt"):
             return "User-agent: *\nDisallow: /" if "b.example" in url else "User-agent: *\nAllow: /"
         if "c.example" in url:
             raise urllib.error.HTTPError(url, 403, "Forbidden", {}, io.BytesIO())
-        return self.RSS if url.endswith("/feed") else self.PAGES[url]
+        return {"https://a.example.invalid/feed": self.RSS, "https://a.example.invalid/atom": self.ATOM}[url]
 
     def test_feed_research_is_anonymous_dedupes_and_skips_forbidden_sources(self):
         with tempfile.TemporaryDirectory() as d:
             folder = Path(d)
-            (folder / sync.SOURCES).write_text("# Kommentar\nhttps://a.example.invalid/feed\n"
+            (folder / sync.SOURCES).write_text("# Kommentar\nhttps://a.example.invalid/feed\nhttps://a.example.invalid/atom\n"
                                                "https://b.example.invalid/feed\nhttps://c.example.invalid/feed\n",
                                                encoding="utf-8")
-            n, new, status = sync.research_cycle(folder, self.fetch, delay=0)
-            self.assertEqual((n, len(new)), (3, 2))
-            self.assertIn("robots.txt verbietet", status[1])
-            self.assertIn("HTTP 403", status[2])
-            self.assertFalse(any("127.0.0.1" in s for s in status))  # off-host link never fetched
+            n, new, status = sync.research_cycle(folder, self.fetch)
+            self.assertEqual((n, len(new)), (4, 3))  # 2 RSS + 1 Atom posts with numerology content
+            self.assertIn("3 Beiträge, 2 mit Numerologie-Bezug", status[0])
+            self.assertIn("robots.txt verbietet", status[2])
+            self.assertIn("HTTP 403", status[3])
+            # Post pages are never requested, so feed links cannot reach LAN/localhost (no SSRF).
+            self.assertFalse([u for u in self.calls if "/q/" in u or "/e/" in u or "127.0.0.1" in u])
+            self.assertFalse(any("/q/" in s for s in status))  # post URLs (pseudonyms) not in the status file
             raw = (folder / sync.SIGNALS_CSV).read_text(encoding="utf-8")
             self.assertNotIn("x@example.invalid", raw)  # contact data never stored
-            self.assertEqual(sync.research_cycle(folder, self.fetch, delay=0)[1], [])  # no duplicates
+            self.assertEqual(sync.research_cycle(folder, self.fetch)[1], [])  # no duplicates
 
     def test_feed_with_entities_rejected(self):
         bomb = '<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaa">]><rss><channel><item><link>&a;</link></item></channel></rss>'
         with self.assertRaises(ValueError):
-            sync.feed_links(bomb)
-        self.assertEqual(len(sync.feed_links(self.RSS)), 3)  # parser returns all; research_cycle filters hosts
+            sync.feed_items(bomb)
+
+    def test_malformed_item_urls_do_not_block_other_sources(self):
+        bad = ("<rss><channel><item><link>https:///kein-host</link><description>Numerologie</description></item>"
+               "<item><link>http://[zerbrochen</link><description>Numerologie</description></item></channel></rss>")
+        self.assertEqual(sync.feed_items(bad), [])
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / sync.SOURCES).write_text("https://a.example.invalid/bad\nhttps://a.example.invalid/feed\n",
+                                                encoding="utf-8")
+            feeds = {"https://a.example.invalid/bad": bad, "https://a.example.invalid/feed": self.RSS}
+            fetch = lambda u: "User-agent: *\nAllow: /" if u.endswith("/robots.txt") else feeds[u]
+            n, new, status = sync.research_cycle(Path(d), fetch)
+            self.assertEqual(len(new), 2)  # the good feed still delivers
 
     def test_default_sources_file_created(self):
         with tempfile.TemporaryDirectory() as d:
-            n, new, status = sync.research_cycle(Path(d), lambda url: (_ for _ in ()).throw(OSError()), delay=0)
-            self.assertEqual(n, 5)
+            n, new, status = sync.research_cycle(Path(d), lambda url: (_ for _ in ()).throw(OSError()))
+            self.assertEqual(n, 9)
             self.assertTrue(all(s.startswith("übersprungen") for s in status))
 
 
