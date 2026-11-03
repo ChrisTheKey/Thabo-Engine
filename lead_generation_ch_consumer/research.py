@@ -13,6 +13,7 @@ import html
 import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import urllib.robotparser
@@ -41,6 +42,10 @@ def allowed_by_robots(url, fetch=_fetch):
     rp = urllib.robotparser.RobotFileParser()
     try:
         rp.parse(fetch(f"{parts.scheme}://{parts.netloc}/robots.txt").splitlines())
+    except urllib.error.HTTPError as e:
+        # RFC 9309: a missing robots.txt (4xx) means "no rules"; 5xx means the rules are unknown.
+        # Stricter than the RFC: 401/403/429 are read as "bots not welcome".
+        return 400 <= e.code < 500 and e.code not in (401, 403, 429)
     except Exception:
         return False  # fail closed: unknown rules -> don't fetch
     return rp.can_fetch(USER_AGENT, url)

@@ -8,7 +8,7 @@ Lokales CRM für private Einzelkäufer persönlicher Numerologie-Reports (Fokus:
 
 | Pfad | Zweck |
 |---|---|
-| `numerology-crm/index.html` | Einzeldatei-CRM. Die Daten bleiben im `localStorage` des Browsers. CSV-Import/-Export, JSON-Backup, Filter nach Kontaktfreigabe |
+| `numerology-crm/index.html` | Einzeldatei-CRM mit zwei getrennten Bereichen: Einzelkunden und B2B-Vertriebspartner (je eigener `localStorage`-Schlüssel und eigene Statistik). Die Daten bleiben im Browser. CSV-Import/-Export, JSON-Backup (nur Einzelkunden), Filter nach Kontaktfreigabe |
 | `lead_generation_ch_consumer/leads.py` | Validierung, Scoring, Deduplizierung, Kontaktfreigabe, CRM-CSV-Export |
 | `numerology-landing/` | Mobiloptimierte Landingpage mit Anfrageformular, Datenschutzhinweisen und Widerruf |
 | `lead_generation_ch_consumer/server.py` | Backend für die Landingpage: Validierung, Einwilligungsnachweis, Spam-Schutz, SQLite ausserhalb des Repos, CRM-Export |
@@ -318,6 +318,78 @@ Geprüft wurde dieser Ablauf: Kontakte über die search.ch-API beziehen, zu jede
 | Erlaubte Werbeanrufe | 0 |
 
 Zulässig bleibt nur die Gegenrichtung mit konkretem Anlass. Ein Beispiel: Eine Person meldet sich selbst, etwa über einen Anruf oder das Formular. Dann darf ihr Eintrag einzeln nachgeschlagen werden, also Anruferkennung oder Einzelsuche nach Ziff. 4.1.
+
+## B2B-Partnersuche Schweiz (TF-NUMEROLOGY-014)
+
+`lead_generation_ch_consumer/b2b.py` sucht potenzielle **Vertriebspartner** in drei Zielgruppen: Esoterik- und Spiritualitätsgeschäfte, Astrologie- und Tarot-Beratungen, spirituelle Coaches.
+
+**Quelle:** OpenStreetMap über die Overpass-Instanz des Schweizer OSM-Vereins (`overpass.osm.ch`, nur Schweizer Daten, robots.txt erlaubt den Abruf). Die SOSM-Bedingungen verbieten automatisierte Nutzung nicht, behalten sich aber Limits vor. Deshalb:
+
+- eine Abfrage von rund 20 s höchstens **einmal pro Tag**, obwohl der Dienst stündlich aufwacht
+- Daten „© OpenStreetMap-Mitwirkende“ (ODbL), nur intern genutzt
+
+Verworfene Alternativen:
+
+- `overpass-api.de`: robots.txt sperrt `/api/`
+- kumi.systems und private.coffee: zum Zeitpunkt der Prüfung nicht erreichbar
+- search.ch: Massenabfragen sind vertraglich verboten
+- local.ch und Zefix: nicht geprüft
+
+**Ablauf und Filter:**
+
+- Gesucht wird nach Laden-Typ (esoteric, psychic, crystal …) und nach Namensbegriffen auf Deutsch, Französisch und Italienisch. Kurze Begriffe brauchen Wortgrenzen, damit „Freikirche“ nicht als „Reiki“ und „Prévoyance“ nicht als „voyance“ zählt.
+- **Schweiz-Filter:** Jeder Treffer muss in einer Kantonsfläche `CH-xx` liegen. So fallen etwa Liechtenstein-Einträge weg.
+- **Ausgeschlossen:** Kirchen, Versicherungen, Bordelle, Gastronomie und Elektronik, ebenso Einträge ohne Telefon und ohne E-Mail.
+- **Sortierung:** Bern, Zürich, Basel, Luzern, übrige Deutschschweiz, Westschweiz, Tessin.
+
+**Dubletten** werden über Firmenname, Website-Domain, Telefon (letzte 9 Ziffern) und E-Mail erkannt. Bestehende Einträge behalten ID und Erfassungsdatum, leere Felder werden ergänzt.
+
+**Status:**
+
+- Alle Treffer gelten als *potenzieller Vertriebspartner*.
+- Kontaktstatus ist **UNGEKLÄRT**, bei einem laut OSM geschlossenen Geschäft **NEIN**, aber **nie automatisch JA**. Öffentliche Geschäftskontakte sind keine Werbeerlaubnis. Vor einem Anruf den Sterneintrag manuell per search.ch-Einzelabfrage prüfen. Keine Massenwerbung (UWG Art. 3 Abs. 1 lit. o/u).
+
+**Dateien** (Server: `~/thabo-b2b/data`, Rechte nur für den Besitzer). Die Privatkunden-Dateien bleiben unberührt.
+
+- `numerology_b2b_leads.csv`: alle Felder
+- `numerology_b2b_crm_import.csv`: älteres Einzelkunden-Importformat. Der Einzelkunden-Bereich des CRM lehnt diese Datei ab, damit B2B-Partner nicht in der Privatkundenstatistik landen.
+
+**Ins CRM übernehmen:** Im CRM den Reiter **B2B-Vertriebspartner** öffnen, dann **B2B-CSV importieren** und `numerology_b2b_leads.csv` wählen. Wird dieselbe Datei erneut importiert, überspringt das CRM vorhandene Partner (gleiche Lead-ID, E-Mail oder Telefonnummer). Manuelle Änderungen bleiben dabei erhalten. Im B2B-Bereich lässt sich nach Firma, Ort, Telefon (auch `044 …` statt `+41 44 …`) und E-Mail suchen sowie nach Kontakt- und Partnerstatus filtern. Über **Bearbeiten** lassen sich Kontaktdaten, Partner- und Kontaktstatus samt Begründung, nächster Schritt und Gesprächsnotizen ändern. **B2B-CSV exportieren** dient als Sicherung inklusive Notizen und nächstem Schritt, denn das JSON-Backup umfasst nur Einzelkunden.
+- `b2b_zyklen.log`: eine Zeile pro Zyklus, ohne Kontaktdaten
+
+**Betrieb auf dem Server:**
+
+- `deploy/b2b/thabo-b2b.service` ist eine systemd-Benutzereinheit: kein Root, keine Ports, Neustart bei Absturz, CPU 20 %, RAM 256 MB.
+- Damit der Dienst nach einem Server-Neustart startet, braucht der Benutzer „Linger“.
+- Fiverr- und Jarvis-Dienste bleiben unberührt.
+
+```sh
+ssh fiverr '~/thabo-b2b/thabo-b2b.sh START'    # starten + Autostart
+ssh fiverr '~/thabo-b2b/thabo-b2b.sh STOP'     # beenden + Autostart aus (läuft erst nach START wieder)
+ssh fiverr '~/thabo-b2b/thabo-b2b.sh STATUS'
+ssh fiverr '~/thabo-b2b/thabo-b2b.sh REPORT'   # Zahlen + erste zehn Firmen
+scp fiverr:thabo-b2b/data/numerology_b2b_crm_import.csv .   # CRM-Datei sicher auf den Laptop, dann im CRM „CSV importieren“
+```
+
+**Stand 03.11.2026:** Der Dienst läuft auf `ubuntu-4gb-fsn1-1` als `thabo-b2b.service` mit Linger (Start nach Server-Neustart). Geprüft wurden:
+
+- Absturz-Neustart per `kill -9`
+- STOP (kein Wiederanlauf)
+- genau eine Instanz
+
+Die Fiverr- und Jarvis-Container waren vor und nach dem Deployment identisch: IDs, Startzeit, Neustart-Zähler und Ports.
+
+**Laptop-Synchronisierung:** Hetzner ist die primäre Quelle. Der bestehende Windows-Dienst (`leadsync.ps1`) zieht in jedem Zyklus beim Login und danach stündlich `numerology_b2b_leads.csv` und `numerology_b2b_crm_import.csv` per `scp` in den Lead-Sammelordner.
+
+- **Übertragung:** verschlüsselt über SSH, mit `-B`, also ohne jede Rückfrage.
+- **Atomar:** Jede Datei wird zuerst in eine `.part`-Datei im selben Ordner geladen. Sie ersetzt die lokale Datei nur, wenn der Spaltenkopf stimmt und sie nicht weniger Zeilen hat. Bei Abbruch oder kaputter Kopie bleibt die lokale Datei unverändert.
+- **Lückenlos:** Weil der Server die vollständige, entdoppelte Liste führt, holt der nächste Lauf nach einer Pause alles nach.
+- **Getrennt:** Die Privatkunden-Dateien werden nicht berührt.
+- **Keine B2B-Suche auf Windows**, also keine doppelte Recherche.
+
+**Voraussetzung für unbeaufsichtigten Betrieb:** Der Schlüssel liegt im Windows-SSH-Agent. Die Passphrase wird nirgends gespeichert; der Agent bewahrt den Schlüssel DPAPI-geschützt im Benutzerprofil auf. Damit das nach einem Windows-Neustart ohne Eingabe weiterläuft, muss der Agent-Dienst automatisch starten. Das geht nur mit Admin-Rechten: `Set-Service ssh-agent -StartupType Automatic`. Fehlt der Schlüssel, meldet der Zyklus `B2B-Sync FEHLER`, ändert aber nichts lokal. Abhilfe ist ein erneutes `ssh-add`.
+
+Die CRM-Importdatei wird nur bereitgestellt. Das CRM speichert im Browser und wird nicht automatisch verändert. Eine aktualisierte CSV-Datei ist also noch kein erfolgter Import. Importiert wird von Hand über **CSV importieren**.
 
 ## Recht und Datenschutz
 
