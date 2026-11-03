@@ -51,7 +51,7 @@ def data_dir():
     d = Path(os.environ.get("THABO_DATA_DIR") or Path.home() / ".thabo-engine").resolve()
     if d == REPO_ROOT or REPO_ROOT in d.parents:
         raise RuntimeError("THABO_DATA_DIR darf nicht im (öffentlichen) Repository liegen")
-    d.mkdir(parents=True, exist_ok=True)
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)  # owner-only on the Linux host
     return d
 
 
@@ -196,7 +196,8 @@ class LeadStore:
             "product": r["product"], "request": f"{r['product']}: {r['request']}",
             "signup_source": "Kontaktformular", "consent_text": r["consent_text"],
             "consent_version": r["consent_version"], "consent_at": r["consent_at"],
-            "contact_permitted": "true", "revoked": "true" if r["revoked_at"] else "false",
+            "contact_permitted": "false",  # no double opt-in yet: unconfirmed addresses get no contact permission
+            "revoked": "true" if r["revoked_at"] else "false",
             "pipeline_status": r["pipeline_status"], "next_contact": "",
             "location": r["location"],
             # No double opt-in yet: every address stays unverified.
@@ -209,6 +210,76 @@ class LeadStore:
         return out, rejected
 
 
+SECURITY_HEADERS = [
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+    ("X-Frame-Options", "DENY"),
+    ("Strict-Transport-Security", "max-age=31536000"),  # browsers ignore it over plain HTTP
+    ("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; "
+                                "form-action 'self'; frame-ancestors 'none'"),
+]
+PAGES = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js"}
+
+
+def leads_enabled():
+    """Real lead intake stays off until the operator explicitly enables it (THABO_LEADS_ENABLED=1)."""
+    return os.environ.get("THABO_LEADS_ENABLED") == "1"
+
+
+def respond(store, guard, method, path, content_type, body, ip):
+    """Shared request logic for the local server and WSGI. Returns (status, content_type, bytes)."""
+    path = path.split("?")[0]
+
+    def js(code, obj):
+        return code, "application/json; charset=utf-8", json.dumps(obj, ensure_ascii=False).encode()
+
+    if method == "GET":
+        if path == "/health":
+            return js(200, {"ok": True, "leads_enabled": leads_enabled()})
+        name = PAGES.get(path)
+        if not name:
+            return js(404, {"error": "not found"})
+        ctype = "text/html; charset=utf-8" if name.endswith(".html") else "text/javascript; charset=utf-8"
+        return 200, ctype, (LANDING_DIR / name).read_bytes()
+    if method != "POST":
+        return js(405, {"error": "method not allowed"})
+    try:
+        if content_type.split(";")[0].strip() != "application/json":
+            raise ValidationError("Content-Type muss application/json sein")
+        data = json.loads(body)
+        if not isinstance(data, dict):
+            raise ValidationError("Ungültige Anfrage")
+        if path == "/api/lead":
+            if not leads_enabled():
+                return js(503, {"error": "Anfragen sind noch nicht freigeschaltet."})
+            reason = guard.check(ip, data)
+            if reason == "honeypot":
+                return js(200, {"ok": True})  # don't tell bots
+            if reason:
+                return js(429, {"error": "Bitte kurz warten und erneut versuchen."})
+            status, token = store.add(validate_submission(data))
+            # Same answer for new and duplicate: don't reveal whether an email is stored.
+            return js(200, {"ok": True, "revoke_token": token})
+        if path == "/api/revoke":
+            ok = store.revoke(str(data.get("token") or ""), delete=data.get("delete") is True)
+            return js(200, {"ok": True}) if ok else js(404, {"error": "Widerrufscode unbekannt"})
+        return js(404, {"error": "not found"})
+    except (ValidationError, ValueError) as e:  # JSONDecodeError is a ValueError
+        return js(400, {"error": str(e) if isinstance(e, ValidationError) else "Ungültige Anfrage"})
+    except Exception:
+        return js(500, {"error": "Serverfehler"})
+
+
+def _read_body(stream, length):
+    n = int(length or 0)
+    if not 0 < n <= MAX_BODY:
+        return None
+    return stream.read(n)
+
+
+TOO_BIG = (400, "application/json; charset=utf-8", b'{"error": "Anfrage zu gross oder leer"}')
+
+
 def make_handler(store, guard):
     class Handler(BaseHTTPRequestHandler):
         server_version = "ThaboLanding"
@@ -217,63 +288,37 @@ def make_handler(store, guard):
         def log_message(self, fmt, *args):  # no IPs, bodies or query strings in logs
             sys.stderr.write(f"{self.command} {self.path.split('?')[0]} -> {args[1] if len(args) > 1 else ''}\n")
 
-        def _send(self, code, body, ctype="application/json; charset=utf-8"):
-            data = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
-            self.send_response(code)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("X-Frame-Options", "DENY")
-            self.send_header("Content-Security-Policy",
-                             "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; "
-                             "form-action 'self'; frame-ancestors 'none'")
+        def _handle(self):
+            body = b"" if self.command == "GET" else _read_body(self.rfile, self.headers.get("Content-Length"))
+            status, ctype, data = TOO_BIG if body is None else respond(
+                store, guard, self.command, self.path, self.headers.get("Content-Type", ""), body,
+                self.client_address[0])
+            self.send_response(status)
+            for k, v in [("Content-Type", ctype), ("Content-Length", str(len(data)))] + SECURITY_HEADERS:
+                self.send_header(k, v)
             self.end_headers()
             self.wfile.write(data)
 
-        def do_GET(self):
-            files = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js"}
-            name = files.get(self.path.split("?")[0])
-            if not name:
-                return self._send(404, {"error": "not found"})
-            ctype = "text/html; charset=utf-8" if name.endswith(".html") else "text/javascript; charset=utf-8"
-            self._send(200, (LANDING_DIR / name).read_bytes(), ctype)
-
-        def _json(self):
-            if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
-                raise ValidationError("Content-Type muss application/json sein")
-            n = int(self.headers.get("Content-Length") or 0)
-            if not 0 < n <= MAX_BODY:
-                raise ValidationError("Anfrage zu gross oder leer")
-            data = json.loads(self.rfile.read(n))
-            if not isinstance(data, dict):
-                raise ValidationError("Ungültige Anfrage")
-            return data
-
-        def do_POST(self):
-            try:
-                data = self._json()
-                if self.path == "/api/lead":
-                    reason = guard.check(self.client_address[0], data)
-                    if reason == "honeypot":
-                        return self._send(200, {"ok": True})  # don't tell bots
-                    if reason:
-                        return self._send(429, {"error": "Bitte kurz warten und erneut versuchen."})
-                    status, token = store.add(validate_submission(data))
-                    # Same answer for new and duplicate: don't reveal whether an email is stored.
-                    return self._send(200, {"ok": True, "revoke_token": token})
-                if self.path == "/api/revoke":
-                    ok = store.revoke(str(data.get("token") or ""), delete=data.get("delete") is True)
-                    return self._send(200 if ok else 404,
-                                      {"ok": ok} if ok else {"error": "Widerrufscode unbekannt"})
-                return self._send(404, {"error": "not found"})
-            except (ValidationError, json.JSONDecodeError, ValueError) as e:
-                msg = str(e) if isinstance(e, ValidationError) else "Ungültige Anfrage"
-                return self._send(400, {"error": msg})
-            except Exception:
-                return self._send(500, {"error": "Serverfehler"})
+        do_GET = do_POST = _handle
 
     return Handler
+
+
+def wsgi_app(store, guard):
+    def application(environ, start_response):
+        method = environ["REQUEST_METHOD"]
+        body = b"" if method == "GET" else _read_body(environ["wsgi.input"], environ.get("CONTENT_LENGTH"))
+        # PythonAnywhere's load balancer puts the real client IP into X-Real-IP.
+        ip = environ.get("HTTP_X_REAL_IP") or environ.get("REMOTE_ADDR", "")
+        status, ctype, data = TOO_BIG if body is None else respond(
+            store, guard, method, environ.get("PATH_INFO") or "/", environ.get("CONTENT_TYPE", ""), body, ip)
+        reason = {200: "OK", 400: "Bad Request", 404: "Not Found", 405: "Method Not Allowed",
+                  429: "Too Many Requests", 500: "Internal Server Error", 503: "Service Unavailable"}[status]
+        start_response(f"{status} {reason}",
+                       [("Content-Type", ctype), ("Content-Length", str(len(data)))] + SECURITY_HEADERS)
+        return [data]
+
+    return application
 
 
 def main(argv):
@@ -286,7 +331,7 @@ def main(argv):
     if argv[:1] == ["serve"]:
         port = int(argv[argv.index("--port") + 1]) if "--port" in argv else 8080
         srv = ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, SpamGuard()))
-        print(f"Landingpage: http://127.0.0.1:{port}/  (Daten: {data_dir()})")
+        print(f"Landingpage: http://127.0.0.1:{port}/  (Daten: {data_dir()}, Anfragen aktiv: {leads_enabled()})")
         srv.serve_forever()
         return
     print(__doc__)

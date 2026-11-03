@@ -61,7 +61,8 @@ class PublicFilesTest(unittest.TestCase):
         return [ROOT / p for p in out.splitlines()]
 
     def test_no_personal_data_or_secrets_in_repo(self):
-        allowed_email = re.compile(r"@example\.invalid$|^noreply@anthropic\.com$", re.I)
+        # Only synthetic addresses, the commit trailer and the operator contact published on purpose.
+        allowed_email = re.compile(r"@example\.invalid$|^noreply@anthropic\.com$|^chriskaelin98@gmail\.com$", re.I)
         for path in self.tracked_files():
             if path.suffix not in {".py", ".html", ".js", ".md", ".csv", ".txt", ".example", ""}:
                 continue

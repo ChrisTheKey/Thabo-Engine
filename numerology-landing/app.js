@@ -6,6 +6,13 @@
   const $ = id => document.getElementById(id);
   const show = (el, text, ok) => { el.className = 'msg ' + (ok ? 'ok' : 'err'); el.textContent = text; };
 
+  // Lock the form while the operator has not enabled real lead intake.
+  fetch('/health').then(r => r.json()).then(h => {
+    if (h.leads_enabled) return;
+    $('leadform').querySelectorAll('input,select,textarea,button').forEach(el => { el.disabled = true; });
+    show($('formmsg'), 'Anfragen sind noch nicht freigeschaltet. Bitte versuchen Sie es später erneut.', false);
+  }).catch(() => {});
+
   async function post(url, body) {
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     let data = {};

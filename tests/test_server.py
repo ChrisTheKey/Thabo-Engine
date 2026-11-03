@@ -101,7 +101,7 @@ class StoreTest(unittest.TestCase):
         self.add()
         rows, rejected = self.store.crm_rows()
         self.assertFalse(rejected)
-        self.assertEqual(rows[0]["permission"], "true")
+        self.assertEqual((rows[0]["permission"], rows[0]["channel"]), ("false", "Keiner"))  # email unconfirmed
         self.assertEqual(rows[0]["status"], "Neu")
         self.assertEqual(rows[0]["location"], "Bern / BE")
         self.assertIn("Interessensscore", rows[0]["notes"])
@@ -133,7 +133,10 @@ class StoreTest(unittest.TestCase):
         status, token2 = self.add(request="Doch interessiert, bitte Angebot")
         self.assertEqual(status, "renewed")
         self.assertNotEqual(token, token2)
-        self.assertEqual(self.store.crm_rows()[0][0]["permission"], "true")
+        r = self.store.crm_rows()[0][0]
+        self.assertEqual(r["status"], "Neu")
+        self.assertFalse(r["notes"].startswith("GESPERRT"))
+        self.assertEqual(r["permission"], "false")  # still unconfirmed email
 
 
 class DataDirTest(unittest.TestCase):
@@ -146,6 +149,8 @@ class DataDirTest(unittest.TestCase):
 class HttpTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.env = mock.patch.dict(os.environ, {"THABO_LEADS_ENABLED": "1"})
+        cls.env.start()
         cls.tmp = tempfile.TemporaryDirectory()
         cls.store = srv.LeadStore(Path(cls.tmp.name) / "h.sqlite3")
         cls.httpd = ThreadingHTTPServer(("127.0.0.1", 0), srv.make_handler(cls.store, srv.SpamGuard(limit=(3, 3600))))
@@ -158,6 +163,7 @@ class HttpTest(unittest.TestCase):
         cls.httpd.server_close()
         cls.store.db.close()
         cls.tmp.cleanup()
+        cls.env.stop()
 
     def call(self, path, body=None, ctype="application/json"):
         data = None if body is None else (body if isinstance(body, bytes) else json.dumps(body).encode())

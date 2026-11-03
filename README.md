@@ -121,22 +121,60 @@ Geprüft am 03.11.2026 anhand von https://search.ch/tel/api/help und https://sea
 
 Das Modul ist auf das revDSG und das UWG ausgelegt (Art. 3 Abs. 1 lit. o: Massenwerbung nur mit Einwilligung; lit. u: Sterneintrag beachten). Ausgeschlossen sind: automatische Werbeanrufe oder -mails, unaufgeforderte Direktnachrichten, Deanonymisierung, Kontaktdaten-Anreicherung und erfundene Leads oder Einwilligungen. Einwilligungsfelder in späteren Formularen dürfen nie vorangekreuzt sein.
 
-## HTTPS-Produktivbetrieb (noch nicht bereitgestellt)
+## Hosting auf PythonAnywhere EU (vorbereitet, noch nicht live)
 
-Bisher läuft alles nur lokal. Für den Livegang fehlen:
+Lokaler Server (`serve`) und PythonAnywhere (`deploy/pythonanywhere_wsgi.py` → `server.wsgi_app`) verwenden dieselbe Anfragelogik `server.respond()`. Beide setzen dieselben Sicherheits-Header (CSP, HSTS, `nosniff`, `DENY`, `no-referrer`).
+
+**Lead-Freigabe:** Die Lead-Erfassung ist serverseitig gesperrt, solange `THABO_LEADS_ENABLED` nicht genau `1` ist. Gesperrt bedeutet: `POST /api/lead` antwortet mit 503 und speichert nichts. `GET /health` meldet `{"ok": true, "leads_enabled": false}`, und die Landingpage sperrt dann das Formular. Widerruf und Löschung bleiben immer möglich. Die WSGI-Vorlage setzt standardmässig `0`.
+
+Einrichtung (kostenloser Beginner-Account, keine Zahlungsangaben nötig):
+
+1. **Anmeldung (manuell, nur durch den Betreiber):** Konto auf <https://eu.pythonanywhere.com/> anlegen bzw. sich anmelden. Für Backups unter *Account → API token* einen Token erzeugen und nur in die lokale, git-ignorierte Datei `lead_generation_ch_consumer/.env` eintragen (`PA_USERNAME=…`, `PA_API_TOKEN=…`).
+2. In einer *Bash console*: `git clone https://github.com/ChrisTheKey/Thabo-Engine.git ~/Thabo-Engine`
+3. *Web → Add a new web app → Manual configuration →* aktuelle Python-3-Version.
+4. Die WSGI-Datei (`/var/www/<user>_eu_pythonanywhere_com_wsgi.py`) vollständig durch den Inhalt von `deploy/pythonanywhere_wsgi.py` ersetzen. `THABO_LEADS_ENABLED` bleibt `0`.
+5. *Force HTTPS* aktivieren und *Reload* klicken. Danach prüfen: `https://<user>.eu.pythonanywhere.com/health` muss `"leads_enabled": false` melden.
+
+Die Lead-Daten liegen dort in `~/.thabo-engine/` und damit ausserhalb des Repositorys. Dieser Ordner wird nicht ausgeliefert.
+
+## Verschlüsseltes Backup
+
+Für das Backup werden gpg (bei Git for Windows enthalten) und ein eigenes Schlüsselpaar benötigt. Der private Schlüssel bleibt nur auf dem Laptop. Zum Verschlüsseln genügt der öffentliche Schlüssel, eine Passphrase ist dafür nicht nötig.
+
+```bash
+gpg --quick-generate-key "Thabo Backup <eigene-adresse>" default default never   # einmalig
+# in lead_generation_ch_consumer/.env: THABO_BACKUP_GPG_RECIPIENT=<eigene-adresse>
+python -m lead_generation_ch_consumer.backup pull                     # PythonAnywhere -> ~/Documents/ThaboBackups
+python -m lead_generation_ch_consumer.backup local ~/.thabo-engine/leads.sqlite3
+python -m lead_generation_ch_consumer.backup restore-test ~/Documents/ThaboBackups/leads-<datum>.sqlite3.gpg
+```
+
+So arbeitet das Backup:
+
+- Es prüft vor dem Verschlüsseln jede Kopie mit `integrity_check`. Ein unvollständiger Download wird bis zu dreimal wiederholt.
+- Es behält die letzten 12 Backups.
+- Es verweigert einen Backup-Ordner im Repository.
+- Unverschlüsselte Kopien liegen nur kurz in einem temporären Ordner.
+
+`restore-test` entschlüsselt ein Backup in einen temporären Ordner und prüft es. Es sollte nach jedem neuen Backup-Schlüssel und danach regelmässig laufen.
+
+## Livegang-Status und Blocker
+
+Stand: Nichts ist öffentlich bereitgestellt.
 
 | Voraussetzung | Status |
 |---|---|
-| Betreiberangaben (Name, Adresse, Kontakt-E-Mail) und Aufbewahrungsfrist in den Datenschutzhinweisen | **Platzhalter** in `numerology-landing/index.html` |
-| Domain und TLS-Zertifikat | fehlt |
-| Server/VM, möglichst in der Schweiz oder im EWR, mit Python 3.11 oder neuer | fehlt |
-| Reverse-Proxy (z. B. Caddy oder nginx) mit HTTPS, HSTS und eigenem Rate-Limit vor `127.0.0.1:8080` | fehlt |
-| E-Mail-Versand für Double-Opt-in und den Widerrufslink per Mail | fehlt |
-| Verschlüsseltes Backup von `THABO_DATA_DIR` | fehlt |
+| Verantwortliche Person (voller Name) und Postadresse in den Datenschutzhinweisen | **fehlt** (Platzhalter in `numerology-landing/index.html`) |
+| Aufbewahrungsfrist | **fehlt** (Platzhalter) |
+| PythonAnywhere-Konto und Anmeldung | **fehlt** (Schritt 1 oben, nur manuell) |
+| Double-Opt-in per Bestätigungsmail | **fehlt**: Bis dahin wird jede Adresse im CRM-Export als `E-Mail UNBESTÄTIGT` ohne Kontaktfreigabe markiert |
+| Backup-Schlüssel erzeugt, erster `pull` und `restore-test` mit echtem Konto | offen |
 | Inhaltliche Prüfung der Produkttexte und des Preises | offen |
+| WSGI-Anbindung, Lead-Sperre, Sicherheits-Header, Backup mit Wiederherstellungstest | erledigt und getestet |
+
+`THABO_LEADS_ENABLED=1` darf erst gesetzt werden, wenn alle Zeilen mit **fehlt** erledigt sind. Bis dahin darf höchstens die Informationsseite mit gesperrtem Formular öffentlich sein.
 
 Hinweise für den Betrieb:
 
-- Der Server bindet bewusst nur an `127.0.0.1`. Hinter einem Proxy sieht er für alle Anfragen dieselbe Client-IP; das Rate-Limit muss dann der Proxy übernehmen.
-- **Double-Opt-in:** Die Einwilligung wird gespeichert, die E-Mail-Adresse aber nicht verifiziert. So könnte jemand eine fremde Adresse eintragen. Vor dem Livegang deshalb eine Bestätigungsmail einbauen und `contact_permitted` erst nach der Bestätigung setzen.
+- Hinter dem PythonAnywhere-Load-Balancer gilt das Rate-Limit pro echter Client-IP (`X-Real-IP`). IPs werden nicht gespeichert.
 - Das CRM speichert lokal im Browser. Für Teamzugriff braucht es Hosting mit Authentifizierung.
