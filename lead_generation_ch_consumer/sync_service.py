@@ -18,6 +18,7 @@ looking up names from posts would join directory data with interest profiles.
 import csv
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -212,7 +213,7 @@ def research_cycle(folder=FOLDER, fetch=None):
     return len(sources), new, status
 
 
-def cycle(folder=FOLDER, opener=None, fetch=None):
+def cycle(folder=FOLDER, opener=None, fetch=None, pull_run=None):
     """One sync + research run. Never raises: each outcome ends up as one log line without personal data."""
     started = datetime.now()
     folder.mkdir(parents=True, exist_ok=True)
@@ -230,9 +231,48 @@ def cycle(folder=FOLDER, opener=None, fetch=None):
             f"{started.isoformat(timespec='seconds')}\n" + "\n".join(status) + "\n", encoding="utf-8"))
     except Exception as e:
         res_msg = f"Recherche FEHLER {type(e).__name__}: {e}"
+    b2b_msg = b2b_pull(folder, **({"run": pull_run} if pull_run else {}))
     call = {k: sum(l["Darf angerufen werden"] == k for l in leads) for k in ("JA", "NEIN", "UNGEKLÄRT")}
     return _log(folder, started, f"{lead_msg} | CRM-Zeilen={rows} | qualifiziert={len(leads)} | "
-                                 f"Anruf JA/NEIN/UNGEKLÄRT={call['JA']}/{call['NEIN']}/{call['UNGEKLÄRT']} | {res_msg}")
+                                 f"Anruf JA/NEIN/UNGEKLÄRT={call['JA']}/{call['NEIN']}/{call['UNGEKLÄRT']} | {res_msg}"
+                                 f" | {b2b_msg}")
+
+
+# Hetzner is the primary B2B source; the laptop only pulls copies (B2B research never runs on Windows).
+B2B_REMOTE = os.environ.get("THABO_B2B_REMOTE", "fiverr:thabo-b2b/data")
+_WIN_SCP = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "OpenSSH" / "scp.exe"
+SCP = os.environ.get("THABO_SCP") or (str(_WIN_SCP) if _WIN_SCP.is_file() else "scp")  # Windows agent holds the key
+
+
+def b2b_pull(folder=FOLDER, run=subprocess.run):
+    """Download the server's B2B CSVs over scp (BatchMode: never prompts). A file is swapped in atomically only
+    if it is complete: expected header and no fewer rows than the local copy. Never raises."""
+    from . import b2b  # late: b2b imports this module
+    try:
+        counts = []
+        for name, fields in ((b2b.B2B_CSV, b2b.FIELDS), (b2b.B2B_CRM, CRM_FIELDS)):
+            part, final = folder / f".{name}.part", folder / name
+            try:
+                r = run([SCP, "-q", "-B", "-o", "ConnectTimeout=20", f"{B2B_REMOTE}/{name}", str(part)],
+                        capture_output=True, text=True, timeout=120,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                if r.returncode != 0:
+                    return f"B2B-Sync FEHLER scp {r.returncode}: {(r.stderr or '').strip()[-200:]}"
+                with open(part, newline="", encoding="utf-8") as f:
+                    header = next(csv.reader(f), [])
+                new_rows, old_rows = read_csv(part), (read_csv(final) if final.is_file() else [])
+                if header != fields:
+                    return f"B2B-Sync FEHLER {name}: unerwarteter Spaltenkopf, lokale Datei unverändert"
+                if len(new_rows) < len(old_rows):  # the server only ever adds rows: fewer means a broken copy
+                    return f"B2B-Sync FEHLER {name}: {len(new_rows)} < {len(old_rows)} Zeilen, lokale Datei unverändert"
+                os.replace(part, final)
+                counts.append(len(new_rows))
+            finally:
+                if part.exists():
+                    part.unlink()
+        return f"B2B-Sync OK: {counts[0]} B2B-Leads ({datetime.now().isoformat(timespec='seconds')})"
+    except Exception as e:
+        return f"B2B-Sync FEHLER {type(e).__name__}: {e}"
 
 
 def _lead_part(folder, started, opener):
@@ -270,7 +310,13 @@ def report(folder=FOLDER):
     signals = len(read_csv(sig)) if sig.is_file() else 0
     detail = (folder / LAST_RESEARCH).read_text(encoding="utf-8").strip() if (folder / LAST_RESEARCH).is_file() else ""
     return (f"Letzter Zyklus: {last}\nGespeicherte Leads: {count}\nCSV: {csv_path}\nCRM-Import: {folder / CRM_CSV}"
+            f"\nB2B-Leads von Hetzner: {_b2b_count(folder)} ({folder / 'numerology_b2b_leads.csv'})"
             f"\nAnonyme Recherche-Signale: {signals} ({sig})\nQuellen: {folder / SOURCES}\n\nLetzte Recherche:\n{detail}")
+
+
+def _b2b_count(folder):
+    path = folder / "numerology_b2b_leads.csv"
+    return len(read_csv(path)) if path.is_file() else 0
 
 
 def run(interval=3600):

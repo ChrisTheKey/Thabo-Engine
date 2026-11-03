@@ -369,7 +369,25 @@ ssh fiverr '~/thabo-b2b/thabo-b2b.sh REPORT'   # Zahlen + erste zehn Firmen
 scp fiverr:thabo-b2b/data/numerology_b2b_crm_import.csv .   # CRM-Datei sicher auf den Laptop, dann im CRM „CSV importieren“
 ```
 
-Eine automatische Synchronisierung ins CRM gibt es nicht. Das CRM speichert im Browser, und es soll keine Browser-Manipulation geben. Die Recherche für Privatkunden auf dem Laptop sucht etwas anderes und läuft unverändert weiter. Doppelte Recherche gibt es deshalb nicht.
+**Stand 03.11.2026:** Der Dienst läuft auf `ubuntu-4gb-fsn1-1` als `thabo-b2b.service` mit Linger (Start nach Server-Neustart). Geprüft wurden:
+
+- Absturz-Neustart per `kill -9`
+- STOP (kein Wiederanlauf)
+- genau eine Instanz
+
+Die Fiverr- und Jarvis-Container waren vor und nach dem Deployment identisch: IDs, Startzeit, Neustart-Zähler und Ports.
+
+**Laptop-Synchronisierung:** Hetzner ist die primäre Quelle. Der bestehende Windows-Dienst (`leadsync.ps1`) zieht in jedem Zyklus beim Login und danach stündlich `numerology_b2b_leads.csv` und `numerology_b2b_crm_import.csv` per `scp` in den Lead-Sammelordner.
+
+- **Übertragung:** verschlüsselt über SSH, mit `-B`, also ohne jede Rückfrage.
+- **Atomar:** Jede Datei wird zuerst in eine `.part`-Datei im selben Ordner geladen. Sie ersetzt die lokale Datei nur, wenn der Spaltenkopf stimmt und sie nicht weniger Zeilen hat. Bei Abbruch oder kaputter Kopie bleibt die lokale Datei unverändert.
+- **Lückenlos:** Weil der Server die vollständige, entdoppelte Liste führt, holt der nächste Lauf nach einer Pause alles nach.
+- **Getrennt:** Die Privatkunden-Dateien werden nicht berührt.
+- **Keine B2B-Suche auf Windows**, also keine doppelte Recherche.
+
+**Voraussetzung für unbeaufsichtigten Betrieb:** Der Schlüssel liegt im Windows-SSH-Agent. Die Passphrase wird nirgends gespeichert; der Agent bewahrt den Schlüssel DPAPI-geschützt im Benutzerprofil auf. Damit das nach einem Windows-Neustart ohne Eingabe weiterläuft, muss der Agent-Dienst automatisch starten. Das geht nur mit Admin-Rechten: `Set-Service ssh-agent -StartupType Automatic`. Fehlt der Schlüssel, meldet der Zyklus `B2B-Sync FEHLER`, ändert aber nichts lokal. Abhilfe ist ein erneutes `ssh-add`.
+
+Die CRM-Importdatei wird nur bereitgestellt. Das CRM speichert im Browser und wird nicht automatisch verändert. Eine aktualisierte CSV-Datei ist also noch kein erfolgter Import. Importiert wird von Hand über **CSV importieren**.
 
 ## Recht und Datenschutz
 

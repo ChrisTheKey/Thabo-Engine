@@ -92,6 +92,9 @@ class CycleTest(unittest.TestCase):
         self.env.start()
         self.net = mock.patch.object(research, "_fetch", side_effect=OSError("offline test"))  # no real network
         self.net.start()
+        self.pull = mock.patch.object(sync, "b2b_pull", return_value="B2B-Sync (Test)")  # no real scp
+        self.pull.start()
+        self.addCleanup(self.pull.stop)
 
     def tearDown(self):
         self.net.stop()
@@ -136,6 +139,56 @@ class CycleTest(unittest.TestCase):
             self.assertNotIn("synthetic-token", (self.folder / sync.LOG).read_text(encoding="utf-8"))
         # a failed cycle leaves the last good CSVs in place
         self.assertEqual(len(read(self.folder / sync.CRM_CSV)), 1)
+
+
+class B2BPullTest(unittest.TestCase):
+    """scp is replaced by a fake that writes the downloaded file (last argument) like scp would."""
+
+    def setUp(self):
+        from lead_generation_ch_consumer import b2b
+        self.b2b, self.tmp = b2b, tempfile.TemporaryDirectory()
+        self.folder = Path(self.tmp.name)
+        self.rows = [{f: "" for f in b2b.FIELDS} | {"Lead-ID": f"B2B-OSM-n{i}", "Firmenname": f"Firma {i} Synthetisch"}
+                     for i in range(3)]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def fake(self, rows, code=0, header=None, partial=False):
+        def run(cmd, **kw):
+            name, dest = cmd[-2].rsplit("/", 1)[1], cmd[-1]
+            fields = header or (self.b2b.FIELDS if name == self.b2b.B2B_CSV else sync.CRM_FIELDS)
+            data = rows if name == self.b2b.B2B_CSV else self.b2b.crm_rows(
+                [r | {"Kanton": "BE", "Quellen-URL": "u", "Erfassungsdatum": "d", "Geschäftskategorie": "x",
+                      "Kontaktstatus": "UNGEKLÄRT", "Begründung Kontaktstatus": "-"} for r in rows])
+            sync.write_csv(dest, fields, data)
+            if partial:
+                with open(dest, "r+", encoding="utf-8") as f:
+                    f.truncate(len(f.read()) // 2)
+            return mock.Mock(returncode=code, stderr="Verbindung unterbrochen" if code else "")
+        return run
+
+    def test_pull_atomic_and_complete(self):
+        msg = sync.b2b_pull(self.folder, run=self.fake(self.rows))
+        self.assertIn("B2B-Sync OK: 3 B2B-Leads", msg)
+        self.assertEqual(len(read(self.folder / self.b2b.B2B_CSV)), 3)
+        self.assertEqual(len(read(self.folder / self.b2b.B2B_CRM)), 3)
+        self.assertEqual(list(self.folder.glob(".*.part")), [])
+
+    def test_interrupted_or_broken_downloads_keep_local_files(self):
+        sync.b2b_pull(self.folder, run=self.fake(self.rows))
+        before = (self.folder / self.b2b.B2B_CSV).read_bytes()
+        for broken in (self.fake(self.rows, code=1, partial=True),     # connection dropped mid-transfer
+                       self.fake(self.rows[:1]),                        # truncated server copy: fewer rows
+                       self.fake(self.rows, header=["falsch"])):        # not our file
+            self.assertIn("FEHLER", sync.b2b_pull(self.folder, run=broken))
+            self.assertEqual((self.folder / self.b2b.B2B_CSV).read_bytes(), before)
+            self.assertEqual(list(self.folder.glob(".*.part")), [])
+
+    def test_missing_scp_never_raises(self):
+        def boom(cmd, **kw):
+            raise FileNotFoundError("scp.exe")
+        self.assertIn("B2B-Sync FEHLER FileNotFoundError", sync.b2b_pull(self.folder, run=boom))
 
 
 class ResearchTest(unittest.TestCase):
