@@ -19,7 +19,8 @@ import urllib.robotparser
 from datetime import date
 from pathlib import Path
 
-from .leads import EMAIL_RE, PHONE_RE, SIGNAL_FIELDS, prepare_signals, read_csv, score_signal, write_csv
+from .leads import (EMAIL_RE, PHONE_RE, SIGNAL_FIELDS, prepare_signals, read_csv, score_signal, signal_category,
+                    write_csv)
 
 USER_AGENT = "ThaboResearchBot/1.0 (+manual review; respects robots.txt)"
 TOPIC_RE = re.compile(r"[^.!?\n]*(numerolog|lebenszahl|geburtszahl|schicksalszahl)[^.!?\n]*[.!?]?", re.I)
@@ -59,7 +60,9 @@ def extract_signal(url, raw_html, today=None):
     sentences = [m.group(0).strip() for m in TOPIC_RE.finditer(text)]
     if not sentences:
         return None
-    best = max(sentences, key=lambda s: score_signal(s)[0])
+    # A short post is scored as a whole, so an ad phrase in another sentence still marks it as provider.
+    # shortcut: longer pages use their best sentence only; ad phrases elsewhere on the page are missed.
+    best = text.strip() if len(text.strip()) <= 300 else max(sentences, key=lambda s: score_signal(s)[0])
     swiss = SWISS_RE.search(text) or urllib.parse.urlsplit(url).hostname.endswith(".ch")
     return {
         "signal_id": "SIG-" + hashlib.sha256(url.encode()).hexdigest()[:12].upper(),
@@ -68,7 +71,7 @@ def extract_signal(url, raw_html, today=None):
         "found_at": (today or date.today()).isoformat(),
         "posted_at": "",
         "need_summary": anonymize(best)[:300],
-        "product_fit": "persönlicher Report" if score_signal(best)[0] >= 70 else "unklar",
+        "product_fit": signal_category(score_signal(anonymize(best))[0]),
         # Only a hint; residence needs human verification (German text alone proves nothing).
         "geo_evidence": "Hinweis: CH-Bezug im Text/Domain – manuell prüfen" if swiss else "kein CH-Beleg",
         "anon_ref": "",

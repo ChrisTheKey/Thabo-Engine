@@ -16,6 +16,7 @@ are pseudonymous, so research yields anonymous signals only, never leads; search
 looking up names from posts would join directory data with interest profiles.
 """
 import csv
+import json
 import os
 import sys
 import tempfile
@@ -23,11 +24,13 @@ import time
 import urllib.error
 import urllib.parse
 import xml.etree.ElementTree as ET
+from collections import Counter
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from . import backup, research
-from .leads import CRM_FIELDS, SIGNAL_FIELDS, prepare_signals, read_csv, write_csv
+from .leads import CRM_FIELDS, SIGNAL_FIELDS, prepare_signals, read_csv, signal_category, write_csv
 from .server import LeadStore, data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -52,6 +55,12 @@ https://swiss.social/tags/numerologie.rss
 https://mastodon.social/tags/numerologie.rss
 https://mastodon.social/tags/lebenszahl.rss
 https://chaos.social/tags/numerologie.rss
+# Bluesky-Volltextsuche (öffentliche API ohne Login, nur lesend; Developer Guidelines geprüft 2026-11-03)
+https://api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=numerologie&lang=de&limit=20&sort=latest
+https://api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=lebenszahl&lang=de&limit=20&sort=latest
+https://api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=numerologie%20beratung&lang=de&limit=20&sort=latest
+https://api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=lebensweg%20analyse&lang=de&limit=20&sort=latest
+https://api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=numerologie%20kosten&lang=de&limit=20&sort=latest
 """
 FEED_ITEMS = 20  # per feed and cycle
 
@@ -120,18 +129,42 @@ def _crm_rows(db):
         store.db.close()
 
 
+def _date(v):
+    """YYYY-MM-DD from an RSS (RFC 822), Atom or Bluesky (ISO) timestamp; '' if unparseable."""
+    v = (v or "").strip()
+    try:
+        d = datetime.fromisoformat(v.replace("Z", "+00:00")) if v[:4].isdigit() else parsedate_to_datetime(v)
+        return d.date().isoformat()
+    except (TypeError, ValueError, IndexError):
+        return ""
+
+
 def feed_items(xml_text):
-    """(post URL, post HTML) pairs from an RSS or Atom feed."""
+    """(post URL, post HTML, post date) from an RSS or Atom feed."""
     # Untrusted input: refuse DTDs/entities outright (no entity expansion), no new dependency needed.
     if "<!DOCTYPE" in xml_text.upper() or "<!ENTITY" in xml_text.upper():
         raise ValueError("Feed mit DTD/Entity abgelehnt")
     root = ET.fromstring(xml_text)
     atom = "{http://www.w3.org/2005/Atom}"
-    items = [(i.findtext("link", ""), i.findtext("description", "")) for i in root.iter("item")]
+    items = [(i.findtext("link", ""), i.findtext("description", ""), _date(i.findtext("pubDate")))
+             for i in root.iter("item")]
     for e in root.iter(atom + "entry"):
         href = next((l.get("href", "") for l in e.findall(atom + "link") if l.get("rel", "alternate") == "alternate"), "")
-        items.append((href, e.findtext(atom + "content") or e.findtext(atom + "summary") or ""))
-    return [(u.strip(), d) for u, d in items if u.strip().startswith(("https://", "http://")) and _host(u.strip())][:FEED_ITEMS]
+        items.append((href, e.findtext(atom + "content") or e.findtext(atom + "summary") or "",
+                      _date(e.findtext(atom + "published") or e.findtext(atom + "updated"))))
+    return [(u.strip(), d, t) for u, d, t in items
+            if u.strip().startswith(("https://", "http://")) and _host(u.strip())][:FEED_ITEMS]
+
+
+def bsky_items(json_text):
+    """(post URL, text, date) from a public app.bsky.feed.searchPosts response (read-only, no login)."""
+    out = []
+    for p in json.loads(json_text).get("posts", []):
+        parts = str(p.get("uri", "")).split("/")  # at://<did>/app.bsky.feed.post/<rkey>
+        rec = p.get("record") or {}
+        if len(parts) == 5 and parts[3] == "app.bsky.feed.post" and isinstance(rec.get("text"), str):
+            out.append((f"https://bsky.app/profile/{parts[2]}/post/{parts[4]}", rec["text"], _date(rec.get("createdAt"))))
+    return out[:FEED_ITEMS]
 
 
 def _host(url):
@@ -155,8 +188,9 @@ def research_cycle(folder=FOLDER, fetch=None):
             status.append(f"übersprungen: robots.txt verbietet oder unklar | {src}")
             continue
         try:  # one bad feed or item skips only this source, never the whole research run
-            items = feed_items(fetch(src))
-            sigs = [s for s in (research.extract_signal(u, d) for u, d in items) if s]
+            raw = fetch(src)
+            items = bsky_items(raw) if _host(src) == "api.bsky.app" else feed_items(raw)
+            sigs = [{**s, "posted_at": t} for s, t in ((research.extract_signal(u, d), t) for u, d, t in items) if s]
         except urllib.error.HTTPError as e:
             status.append(f"übersprungen: Server verweigert (HTTP {e.code}) | {src}")
             continue
@@ -164,13 +198,16 @@ def research_cycle(folder=FOLDER, fetch=None):
             status.append(f"übersprungen: {type(e).__name__} | {src}")
             continue
         # Counts only: post URLs can contain pseudonyms, so they are not written to the status file.
-        status.append(f"gelesen: {len(items)} Beiträge, {len(sigs)} mit Numerologie-Bezug | {src}")
+        cats = Counter(s["product_fit"] for s in sigs)
+        status.append(f"gelesen: {len(items)} Beiträge, {len(sigs)} mit Numerologie-Bezug "
+                      f"({', '.join(f'{k} {v}' for k, v in sorted(cats.items())) or '-'}) | {src}")
         found += sigs
     out = folder / SIGNALS_CSV
     existing = read_csv(out) if out.is_file() else []
     known = {s["source_url"] for s in existing}
     new, _ = prepare_signals([s for s in found if s["source_url"] not in known])
-    merged, _ = prepare_signals(existing + new)  # dedupe by URL
+    merged, _ = prepare_signals(existing + new)  # dedupe by URL, re-scores with the current rules
+    merged = [{**s, "product_fit": signal_category(s["score"])} for s in merged]  # older rows get today's categories
     _replace(out, lambda p: write_csv(p, SIGNAL_FIELDS, merged))
     return len(sources), new, status
 
@@ -186,7 +223,9 @@ def cycle(folder=FOLDER, opener=None, fetch=None):
     try:
         n_src, new, status = research_cycle(folder, fetch)
         skipped = sum(s.startswith("übersprungen") for s in status[:n_src])
-        res_msg = f"Recherche: {n_src} Quellen, {skipped} übersprungen, {len(new)} neue anonyme Signale"
+        buyers = sum(s["product_fit"] == "Kaufinteresse" for s in new)
+        res_msg = (f"Recherche: {n_src} Quellen, {skipped} übersprungen, {len(new)} neue anonyme Signale, "
+                   f"davon Kaufinteresse={buyers}")
         _replace(folder / LAST_RESEARCH, lambda p: Path(p).write_text(
             f"{started.isoformat(timespec='seconds')}\n" + "\n".join(status) + "\n", encoding="utf-8"))
     except Exception as e:
