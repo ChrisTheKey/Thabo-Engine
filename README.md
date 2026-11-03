@@ -102,20 +102,24 @@ Geprüft am 03.11.2026 anhand von https://search.ch/tel/api/help und https://sea
 
 - Endpoint `https://search.ch/tel/api/`, Key als Parameter `key`, Antwort im Atom-XML-Format. Fehler: 403 bei ungültigem Key, 400/401 bei fehlerhafter Anfrage.
 - Kontingent: **1000 Abfragen pro Monat und Key**, maximal 20 Treffer pro Abfrage (Ziff. 3.4).
-- Erlaubt: Einzelsuche und Anzeige von Einträgen, Anruferkennung, interner Gebrauch (Ziff. 4.1). Quellenangabe „Swisscom Directories AG“ ist Pflicht (Ziff. 4.2).
-- Verboten: maschinelle Massenabfragen, der Aufbau von Adressdatenbanken, widerrechtliche Zwecke und die Weitergabe an Dritte (Ziff. 5.1). Konventionalstrafe: CHF 50 000 pro Verstoss.
+- Erlaubt (Ziff. 4.1, Fassung November 2017, live geprüft am 03.11.2026): Anruferkennung, Suche und Anzeige von Einträgen, Abspeicherung *des Eintrags* in unternehmenseigenen Systemen, Nutzung für den unternehmensinternen Gebrauch. Quellenangabe „Swisscom Directories AG“ ist Pflicht (Ziff. 4.2).
+- Verboten (Ziff. 5.1): alles, was Ziff. 4 nicht ausdrücklich nennt, insbesondere maschinelle Massenabfragen zur Erstellung oder Aktualisierung von Adressdatenbanken, die Weitergabe an Dritte und widerrechtliche Zwecke. Werbung oder Akquise wird in den Bedingungen nirgends erwähnt. Konventionalstrafe: CHF 50 000 pro Verstoss (Ziff. 5.3).
 
 **Fazit: Für die Suche nach Kaufinteressenten ungeeignet und unzulässig.** Ein Verzeichniseintrag belegt weder Interesse an Numerologie noch eine Einwilligung in Werbung. Einträge mit `tel:nopromo` („Wünscht keine Werbung“) sind nach UWG für Werbung tabu. Der Adapter ist nur für interaktive Einzelabfragen gedacht, z. B. um einen Anrufer zu erkennen, und darf nicht über Listen laufen.
 
 ### API-Key sicher hinterlegen
 
-1. `lead_generation_ch_consumer/.env.example` nach `lead_generation_ch_consumer/.env` kopieren. Die `.env` ist git-ignored.
-2. Den Key lokal eintragen, ohne ihn in einen Chat oder ins Repo zu kopieren. Bei dieser PowerShell-Variante erscheint er weder in der History noch auf dem Bildschirm:
-   ```powershell
-   $k = Read-Host -AsSecureString "SEARCH_CH_API_KEY"
-   "SEARCH_CH_API_KEY=" + [Net.NetworkCredential]::new("", $k).Password | Set-Content -NoNewline lead_generation_ch_consumer\.env
-   ```
-3. Verbindung testen: `python -m lead_generation_ch_consumer.search_ch_adapter`. Das ist eine einzelne `count_only`-Abfrage nach Bäckereien in Bern, ohne private Einträge. Der Key erscheint nie in Ausgaben. Achtung: Die API-Antwort selbst enthält den Key im `<id>`-Feld, deshalb das Roh-XML nie loggen.
+Der Key wird mit DPAPI verschlüsselt ausserhalb des Repositorys gespeichert: `%APPDATA%\ThaboEngine\search_ch_key.dpapi`. Nur dasselbe Windows-Konto kann ihn entschlüsseln. In einer eigenen PowerShell eingeben, nicht im Chat. Die Eingabe bleibt verdeckt:
+
+```powershell
+Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"  # nötig, wenn PowerShell 5.1 aus PowerShell 7 gestartet wurde
+$d = "$env:APPDATA\ThaboEngine"; New-Item -ItemType Directory -Force $d | Out-Null
+Read-Host -AsSecureString "search.ch API-Key" | ConvertFrom-SecureString | Set-Content -NoNewline -Encoding ascii "$d\search_ch_key.dpapi"
+```
+
+Reihenfolge beim Laden: zuerst die Umgebungsvariable `SEARCH_CH_API_KEY`, dann die DPAPI-Datei, zuletzt die git-ignorierte `lead_generation_ch_consumer/.env` (Klartext, nur noch als Rückfall).
+
+Verbindung testen: `python -m lead_generation_ch_consumer.search_ch_adapter`. Das ist eine einzelne `count_only`-Abfrage nach Bäckereien in Bern, ohne private Einträge. Der Key erscheint nie in Ausgaben. Achtung: Die API-Antwort selbst enthält den Key im `<id>`-Feld, deshalb das Roh-XML nie loggen.
 
 ## Qualifizierte Leads aus Interessenssignalen – Befund (TF-NUMEROLOGY-006, 03.11.2026)
 
@@ -130,9 +134,8 @@ Geprüft wurde dieser Ablauf: öffentliches Interessenssignal, dann Name und Tel
 Deshalb wurde **kein** Import gebaut:
 
 - **Keine Identität:** Interessenssignale sind absichtlich anonym. Vorname, Nachname, Telefon und E-Mail liessen sich nur durch nachträgliches Suchen von Kontaktdaten ergänzen. Das ist ausgeschlossen (siehe „Recht und Datenschutz“).
-- **Vertrag:** search.ch verbietet den Aufbau von Adressdatenbanken (Ziff. 5.1, CHF 50 000 pro Verstoss). Telefondaten aus dem Verzeichnis im CRM zu speichern, ist genau das. Die Nutzung ist also **nicht** gedeckt.
+- **Vertrag:** Ziff. 4.1 erlaubt, einzelne Einträge intern zu speichern und intern zu nutzen. Verboten ist, das Verzeichnis maschinell abzufragen, um eine Lead- oder Adressdatenbank aufzubauen (Ziff. 5.1, CHF 50 000 pro Verstoss). Ob Akquiseanrufe als „unternehmensinterner Gebrauch“ gelten, lassen die Bedingungen offen. Ohne schriftliche Bestätigung ist das deshalb **nicht** gedeckt.
 - **Fehlende Werbesperre ist keine Erlaubnis:** Ein fehlender Sterneintrag belegt weder Interesse noch eine Einwilligung. Für E-Mail-Werbung braucht es ohnehin eine Einwilligung (UWG Art. 3 Abs. 1 lit. o).
-- **Kein API-Key:** Auf dem Laptop ist kein search.ch-Key hinterlegt (`lead_generation_ch_consumer/.env` fehlt).
 
 Fehlende Berechtigungen, falls dieser Weg je verfolgt werden soll:
 
@@ -140,6 +143,26 @@ Fehlende Berechtigungen, falls dieser Weg je verfolgt werden soll:
 2. eine rechtliche Prüfung, ob Personen anhand öffentlicher Beiträge identifiziert werden dürfen
 
 Der zulässige Weg zu qualifizierten Leads ist das bestehende Opt-in-Formular (Datensatz B). Dort liefern die Personen Interesse, Kontaktdaten und Einwilligung selbst. Eine Prüfung der Werbesperre ist bei einer Einwilligung nicht nötig.
+
+## Recherche Interessenssignale (TF-NUMEROLOGY-007, 03.11.2026)
+
+Durchgeführt wurden 6 Websuchen (deutsch und englisch, mit Schweiz-Bezug, gutefrage.net, Reddit).
+
+| | Anzahl |
+|---|---|
+| Signale mit konkretem Kaufinteresse an einem persönlichen Lebensweg-Report (Score ab 70) | **0** |
+| Signale mit allgemeinem Interesse (Score 0–39), z. B. [„Was ist eure Lebenszahl?“](https://www.gutefrage.net/frage/was-ist-eure-lebenszahl), [„Engelszahlen und Lebenszahlen?“](https://www.gutefrage.net/frage/engelszahlen-und-lebenszahlen) | 2 |
+| Kandidaten mit zulässigem Kontaktweg | **0** |
+| Qualifizierte Leads und importierte CRM-Kontakte | **0** |
+
+Die Treffer waren:
+
+- fast nur Anbieterseiten, Rechner, Bücher und Spam-PDFs
+- Fragen auf gutefrage.net von pseudonymen Nutzern, ohne Name und ohne Kontaktfreigabe
+
+Eine Direktnachricht wäre eine unaufgeforderte Werbebotschaft, und ein Abgleich mit dem Telefonbuch wäre eine Deanonymisierung. Beides ist ausgeschlossen. Reddit sperrt den Zugriff des Suchwerkzeugs. Die Seiten wurden nicht automatisch abgerufen, weil die Nutzungsbedingungen von gutefrage.net nicht geprüft sind.
+
+**Schluss:** Öffentliche Signale belegen Nachfrage. Sie sind aber kein Weg zu kontaktierbaren Leads. Kontaktierbare Leads entstehen nur über das Opt-in-Formular (PR #1), sobald es live ist.
 
 ## Recht und Datenschutz
 
