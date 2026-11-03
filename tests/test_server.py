@@ -105,6 +105,7 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(rows[0]["status"], "Neu")
         self.assertEqual(rows[0]["location"], "Bern / BE")
         self.assertIn("Interessensscore", rows[0]["notes"])
+        self.assertTrue(rows[0]["notes"].startswith("E-Mail UNBESTÄTIGT"))
 
     def test_revoke_blocks(self):
         _, token = self.add()

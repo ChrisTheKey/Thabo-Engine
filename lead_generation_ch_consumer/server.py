@@ -199,7 +199,8 @@ class LeadStore:
             "contact_permitted": "true", "revoked": "true" if r["revoked_at"] else "false",
             "pipeline_status": r["pipeline_status"], "next_contact": "",
             "location": r["location"],
-            "notes": f"Interessensscore {r['score']} ({r['score_reasons']})",
+            # No double opt-in yet: every address stays unverified.
+            "notes": f"E-Mail UNBESTÄTIGT. Interessensscore {r['score']} ({r['score_reasons']})",
         } for r in live]
         out, rejected = to_crm_rows(opt_in)
         # Tombstones carry no personal data; the CRM import removes the matching id.
