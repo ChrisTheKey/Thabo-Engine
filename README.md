@@ -333,7 +333,7 @@ Verworfene Alternativen:
 - `overpass-api.de`: robots.txt sperrt `/api/`
 - kumi.systems und private.coffee: zum Zeitpunkt der Prüfung nicht erreichbar
 - search.ch: Massenabfragen sind vertraglich verboten
-- local.ch und Zefix: keine freie, erlaubte Kontaktquelle
+- local.ch und Zefix: nicht geprüft
 
 **Ablauf und Filter:**
 
