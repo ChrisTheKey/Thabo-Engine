@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
@@ -130,7 +131,14 @@ def feed_items(xml_text):
     for e in root.iter(atom + "entry"):
         href = next((l.get("href", "") for l in e.findall(atom + "link") if l.get("rel", "alternate") == "alternate"), "")
         items.append((href, e.findtext(atom + "content") or e.findtext(atom + "summary") or ""))
-    return [(u.strip(), d) for u, d in items if u.strip().startswith(("https://", "http://"))][:FEED_ITEMS]
+    return [(u.strip(), d) for u, d in items if u.strip().startswith(("https://", "http://")) and _host(u.strip())][:FEED_ITEMS]
+
+
+def _host(url):
+    try:
+        return urllib.parse.urlsplit(url).hostname
+    except ValueError:  # malformed URL from an untrusted feed
+        return None
 
 
 def research_cycle(folder=FOLDER, fetch=None):
@@ -146,15 +154,15 @@ def research_cycle(folder=FOLDER, fetch=None):
         if not research.allowed_by_robots(src, fetch):
             status.append(f"übersprungen: robots.txt verbietet oder unklar | {src}")
             continue
-        try:
+        try:  # one bad feed or item skips only this source, never the whole research run
             items = feed_items(fetch(src))
+            sigs = [s for s in (research.extract_signal(u, d) for u, d in items) if s]
         except urllib.error.HTTPError as e:
             status.append(f"übersprungen: Server verweigert (HTTP {e.code}) | {src}")
             continue
         except Exception as e:
             status.append(f"übersprungen: {type(e).__name__} | {src}")
             continue
-        sigs = [s for s in (research.extract_signal(u, d) for u, d in items) if s]
         # Counts only: post URLs can contain pseudonyms, so they are not written to the status file.
         status.append(f"gelesen: {len(items)} Beiträge, {len(sigs)} mit Numerologie-Bezug | {src}")
         found += sigs

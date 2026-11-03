@@ -184,6 +184,18 @@ class ResearchTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             sync.feed_items(bomb)
 
+    def test_malformed_item_urls_do_not_block_other_sources(self):
+        bad = ("<rss><channel><item><link>https:///kein-host</link><description>Numerologie</description></item>"
+               "<item><link>http://[zerbrochen</link><description>Numerologie</description></item></channel></rss>")
+        self.assertEqual(sync.feed_items(bad), [])
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / sync.SOURCES).write_text("https://a.example.invalid/bad\nhttps://a.example.invalid/feed\n",
+                                                encoding="utf-8")
+            feeds = {"https://a.example.invalid/bad": bad, "https://a.example.invalid/feed": self.RSS}
+            fetch = lambda u: "User-agent: *\nAllow: /" if u.endswith("/robots.txt") else feeds[u]
+            n, new, status = sync.research_cycle(Path(d), fetch)
+            self.assertEqual(len(new), 2)  # the good feed still delivers
+
     def test_default_sources_file_created(self):
         with tempfile.TemporaryDirectory() as d:
             n, new, status = sync.research_cycle(Path(d), lambda url: (_ for _ in ()).throw(OSError()))
