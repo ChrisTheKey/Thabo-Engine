@@ -319,6 +319,58 @@ Geprüft wurde dieser Ablauf: Kontakte über die search.ch-API beziehen, zu jede
 
 Zulässig bleibt nur die Gegenrichtung mit konkretem Anlass. Ein Beispiel: Eine Person meldet sich selbst, etwa über einen Anruf oder das Formular. Dann darf ihr Eintrag einzeln nachgeschlagen werden, also Anruferkennung oder Einzelsuche nach Ziff. 4.1.
 
+## B2B-Partnersuche Schweiz (TF-NUMEROLOGY-014)
+
+`lead_generation_ch_consumer/b2b.py` sucht potenzielle **Vertriebspartner** in drei Zielgruppen: Esoterik- und Spiritualitätsgeschäfte, Astrologie- und Tarot-Beratungen, spirituelle Coaches.
+
+**Quelle:** OpenStreetMap über die Overpass-Instanz des Schweizer OSM-Vereins (`overpass.osm.ch`, nur Schweizer Daten, robots.txt erlaubt den Abruf). Die SOSM-Bedingungen verbieten automatisierte Nutzung nicht, behalten sich aber Limits vor. Deshalb:
+
+- eine Abfrage von rund 20 s höchstens **einmal pro Tag**, obwohl der Dienst stündlich aufwacht
+- Daten „© OpenStreetMap-Mitwirkende“ (ODbL), nur intern genutzt
+
+Verworfene Alternativen:
+
+- `overpass-api.de`: robots.txt sperrt `/api/`
+- kumi.systems und private.coffee: zum Zeitpunkt der Prüfung nicht erreichbar
+- search.ch: Massenabfragen sind vertraglich verboten
+- local.ch und Zefix: keine freie, erlaubte Kontaktquelle
+
+**Ablauf und Filter:**
+
+- Gesucht wird nach Laden-Typ (esoteric, psychic, crystal …) und nach Namensbegriffen auf Deutsch, Französisch und Italienisch. Kurze Begriffe brauchen Wortgrenzen, damit „Freikirche“ nicht als „Reiki“ und „Prévoyance“ nicht als „voyance“ zählt.
+- **Schweiz-Filter:** Jeder Treffer muss in einer Kantonsfläche `CH-xx` liegen. So fallen etwa Liechtenstein-Einträge weg.
+- **Ausgeschlossen:** Kirchen, Versicherungen, Bordelle, Gastronomie und Elektronik, ebenso Einträge ohne Telefon und ohne E-Mail.
+- **Sortierung:** Bern, Zürich, Basel, Luzern, übrige Deutschschweiz, Westschweiz, Tessin.
+
+**Dubletten** werden über Firmenname, Website-Domain, Telefon (letzte 9 Ziffern) und E-Mail erkannt. Bestehende Einträge behalten ID und Erfassungsdatum, leere Felder werden ergänzt.
+
+**Status:**
+
+- Alle Treffer gelten als *potenzieller Vertriebspartner*.
+- Kontaktstatus ist **UNGEKLÄRT**, bei einem laut OSM geschlossenen Geschäft **NEIN**, aber **nie automatisch JA**. Öffentliche Geschäftskontakte sind keine Werbeerlaubnis. Vor einem Anruf den Sterneintrag manuell per search.ch-Einzelabfrage prüfen. Keine Massenwerbung (UWG Art. 3 Abs. 1 lit. o/u).
+
+**Dateien** (Server: `~/thabo-b2b/data`, Rechte nur für den Besitzer). Die Privatkunden-Dateien bleiben unberührt.
+
+- `numerology_b2b_leads.csv`: alle Felder
+- `numerology_b2b_crm_import.csv`: Format des bestehenden CRM-Imports, mit `permission=false` und Kanal „Keiner“
+- `b2b_zyklen.log`: eine Zeile pro Zyklus, ohne Kontaktdaten
+
+**Betrieb auf dem Server:**
+
+- `deploy/b2b/thabo-b2b.service` ist eine systemd-Benutzereinheit: kein Root, keine Ports, Neustart bei Absturz, CPU 20 %, RAM 256 MB.
+- Damit der Dienst nach einem Server-Neustart startet, braucht der Benutzer „Linger“.
+- Fiverr- und Jarvis-Dienste bleiben unberührt.
+
+```sh
+ssh fiverr '~/thabo-b2b/thabo-b2b.sh START'    # starten + Autostart
+ssh fiverr '~/thabo-b2b/thabo-b2b.sh STOP'     # beenden + Autostart aus (läuft erst nach START wieder)
+ssh fiverr '~/thabo-b2b/thabo-b2b.sh STATUS'
+ssh fiverr '~/thabo-b2b/thabo-b2b.sh REPORT'   # Zahlen + erste zehn Firmen
+scp fiverr:thabo-b2b/data/numerology_b2b_crm_import.csv .   # CRM-Datei sicher auf den Laptop, dann im CRM „CSV importieren“
+```
+
+Eine automatische Synchronisierung ins CRM gibt es nicht. Das CRM speichert im Browser, und es soll keine Browser-Manipulation geben. Die Recherche für Privatkunden auf dem Laptop sucht etwas anderes und läuft unverändert weiter. Doppelte Recherche gibt es deshalb nicht.
+
 ## Recht und Datenschutz
 
 Das Modul ist auf das revDSG und das UWG ausgelegt (Art. 3 Abs. 1 lit. o: Massenwerbung nur mit Einwilligung; lit. u: Sterneintrag beachten). Ausgeschlossen sind: automatische Werbeanrufe oder -mails, unaufgeforderte Direktnachrichten, Deanonymisierung, Kontaktdaten-Anreicherung und erfundene Leads oder Einwilligungen. Einwilligungsfelder in späteren Formularen dürfen nie vorangekreuzt sein.

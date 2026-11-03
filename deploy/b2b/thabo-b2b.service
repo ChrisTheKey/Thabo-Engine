@@ -1,0 +1,23 @@
+# systemd user unit: ~/.config/systemd/user/thabo-b2b.service (no root, no ports, own directory only).
+[Unit]
+Description=Thabo-Engine B2B-Partnersuche Schweiz (stuendlicher Zyklus, Quelle max. 1x/Tag)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/thabo-b2b/app
+Environment=THABO_B2B_FOLDER=%h/thabo-b2b/data
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m lead_generation_ch_consumer.b2b run
+# Crash -> controlled restart; a clean STOP (disable --now) does not restart.
+Restart=on-failure
+RestartSec=60
+Nice=10
+CPUQuota=20%
+MemoryMax=256M
+TasksMax=16
+NoNewPrivileges=yes
+UMask=0077
+
+[Install]
+WantedBy=default.target
