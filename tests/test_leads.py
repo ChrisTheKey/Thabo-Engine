@@ -95,6 +95,14 @@ class CsvTest(unittest.TestCase):
             self.assertEqual(p.read_text(encoding="utf-8").splitlines()[0], ",".join(CRM_FIELDS))
             self.assertEqual(read_csv(p), rows)
 
+    def test_formula_injection_neutralised_phone_kept(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "x.csv"
+            write_csv(p, ["a", "b", "c", "d"], [dict(a='=HYPERLINK("http://x.invalid")', b="+41790000000",
+                                                      c="@SUM(1)", d="-1+cmd")])
+            r = read_csv(p)[0]
+            self.assertEqual((r["a"][0], r["b"], r["c"][0], r["d"][0]), ("'", "+41790000000", "'", "'"))
+
     def test_crm_header_matches_html(self):
         html = (Path(__file__).parents[1] / "numerology-crm" / "index.html").read_text(encoding="utf-8")
         self.assertIn("const fields=" + str(CRM_FIELDS).replace(" ", ""), html)

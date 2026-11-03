@@ -18,3 +18,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
+
+# Local lead collection folder (personal data, owner-only ACL), never committed
+Lead-Sammelordner/

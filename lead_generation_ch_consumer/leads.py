@@ -43,11 +43,18 @@ def read_csv(path):
         return list(csv.DictReader(f))
 
 
+def _cell(v):
+    """Neutralise spreadsheet formulas from form input (=, +, -, @, tab, CR); plain numbers like +41... stay."""
+    if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r") and not re.fullmatch(r"[+-]?[\d .]+", v):
+        return "'" + v
+    return v
+
+
 def write_csv(path, fields, rows):
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
-        w.writerows(rows)
+        w.writerows({k: _cell(v) for k, v in r.items()} for r in rows)
 
 
 # ---------- public intent signals ----------
