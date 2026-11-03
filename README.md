@@ -262,6 +262,22 @@ Ein fehlgeschlagener Zyklus wird protokolliert, beendet den Dienst nicht und lä
 - **Kein Neustart nach Absturz:** Die Aufgabenplanung ist ohne erhöhte Rechte gesperrt. Stürzt der Python-Prozess selbst ab, startet er deshalb erst beim nächsten Login oder START neu.
 - **Stand heute 0 Leads:** Das Formular ist nicht live. Ausserdem erhält ohne Double-Opt-in keine Adresse eine Kontaktberechtigung (siehe „Livegang-Status und Blocker“).
 
+## search.ch-Kontakte auf Interesse prüfen – nicht zulässig (TF-NUMEROLOGY-012, 03.11.2026)
+
+Geprüft wurde dieser Ablauf: Kontakte über die search.ch-API beziehen, zu jeder Person im Netz Numerologie-Interesse suchen, bei Treffern als Lead speichern. **Ergebnis: nicht zulässig und nicht umgesetzt.** Es wurde keine search.ch-Abfrage gemacht.
+
+1. **Vertrag:** Ziff. 4.1 erlaubt abschliessend Anruferkennung, Suche und Anzeige, das Speichern des Eintrags und den unternehmensinternen Gebrauch. Ziff. 5.1 verbietet alles andere, ausdrücklich auch „maschinelle Massenabfragen, beispielsweise zur Erstellung oder Aktualisierung von Adressdatenbanken“ (CHF 50 000 pro Verstoss, Ziff. 5.3). Die API braucht einen Suchbegriff. Ohne konkreten Anlass heisst „Kontakte beziehen“ deshalb, Namen oder Orte systematisch abzufragen. Genau das ist verboten. Profiling der Einträge nennt Ziff. 4 nicht.
+2. **Identität:** Interesse zu einer Person im Netz zu finden, geht nur über eine Namenssuche und eine Zuordnung per Namensgleichheit. Diese ist als Identitätsnachweis ausgeschlossen. Öffentliche Beiträge sind zudem fast immer pseudonym. Eine belegte Identität ist so nie erreichbar.
+3. **Datenschutz:** Interessen einzelner Privatpersonen verdeckt zu ermitteln und mit ihren Verzeichnisdaten zu verknüpfen, ist Profiling (Art. 5 lit. f DSG). Der Zweck ist für die Betroffenen nicht erkennbar (Art. 6 Abs. 3 DSG). Ein Sterneintrag ist ausserdem ein ausdrücklicher Werbewiderspruch.
+
+| | Anzahl |
+|---|---|
+| Rechtmässig geprüfte Kontakte | 0 (der Bezug selbst ist schon unzulässig) |
+| Nachweislich interessierte Personen / qualifizierte Leads | 0 / 0 |
+| Erlaubte Werbeanrufe | 0 |
+
+Zulässig bleibt nur die Gegenrichtung mit konkretem Anlass. Ein Beispiel: Eine Person meldet sich selbst, etwa über einen Anruf oder das Formular. Dann darf ihr Eintrag einzeln nachgeschlagen werden, also Anruferkennung oder Einzelsuche nach Ziff. 4.1.
+
 ## Recht und Datenschutz
 
 Das Modul ist auf das revDSG und das UWG ausgelegt (Art. 3 Abs. 1 lit. o: Massenwerbung nur mit Einwilligung; lit. u: Sterneintrag beachten). Ausgeschlossen sind: automatische Werbeanrufe oder -mails, unaufgeforderte Direktnachrichten, Deanonymisierung, Kontaktdaten-Anreicherung und erfundene Leads oder Einwilligungen. Einwilligungsfelder in späteren Formularen dürfen nie vorangekreuzt sein.
