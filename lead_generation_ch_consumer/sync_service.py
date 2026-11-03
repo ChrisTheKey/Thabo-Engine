@@ -1,34 +1,52 @@
-"""One opt-in sync cycle: lead DB -> Lead-Sammelordner (qualified leads) + CRM import CSV.
+"""Hourly cycle: opt-in leads -> Lead-Sammelordner + CRM import CSV, plus anonymous feed research.
 
   python -m lead_generation_ch_consumer.sync_service run      # background loop (leadsync.ps1 START)
   python -m lead_generation_ch_consumer.sync_service cycle    # one cycle now
   python -m lead_generation_ch_consumer.sync_service report
 
-Source: the PythonAnywhere lead DB when PA_USERNAME/PA_API_TOKEN are configured (same download as
-backup.py), else the local DB in THABO_DATA_DIR. No web scraping and no search.ch: the only leads that
-are both lawful and contactable are people who entered their own data and consent in the form.
-Both CSVs are rewritten atomically from the current DB every cycle, so they never hold half rows,
-duplicates or leads that were revoked or deleted in the meantime.
+Leads: the PythonAnywhere lead DB when PA_USERNAME/PA_API_TOKEN are configured (same download as
+backup.py), else the local DB in THABO_DATA_DIR. Only people who entered their own data and consent
+there are contactable. Both CSVs are rewritten atomically from the DB every cycle, so they never hold
+half rows, duplicates or leads that were revoked or deleted in the meantime.
+
+Research: RSS/Atom feeds listed in Lead-Sammelordner/quellen.txt. A feed is read only if robots.txt
+allows it; its item pages go through research.collect (robots again, anonymised, scored). Public posts
+are pseudonymous, so research yields anonymous signals only, never leads; search.ch is not used, as
+looking up names from posts would join directory data with interest profiles.
 """
 import csv
 import os
 import sys
 import tempfile
 import time
+import urllib.error
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
-from . import backup
-from .leads import CRM_FIELDS, write_csv
+from . import backup, research
+from .leads import CRM_FIELDS, SIGNAL_FIELDS, prepare_signals, read_csv, write_csv
 from .server import LeadStore, data_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FOLDER = Path(os.environ.get("THABO_LEAD_FOLDER") or REPO_ROOT / "Lead-Sammelordner")
 LEADS_CSV = "numerologie_leads.csv"
 CRM_CSV = "crm_import.csv"
+SIGNALS_CSV = "recherche_signale.csv"
+SOURCES = "quellen.txt"
+LAST_RESEARCH = "recherche_letzter_zyklus.txt"
 LOG = "zyklen.log"
 FIELDS = ["Lead-ID", "Name", "Telefonnummer", "E-Mail-Adresse", "Interessensnachweis", "Quellen-URL",
-          "Prüfdatum", "Kontaktberechtigung", "Kontaktstatus"]
+          "Prüfdatum", "Kontaktberechtigung", "Darf angerufen werden", "Begründung Anrufstatus", "Kontaktstatus"]
+# German-language feeds checked on 2026-11-03; all currently refuse automated access (see README).
+DEFAULT_SOURCES = """# Ein RSS/Atom-Feed pro Zeile. Nur Quellen eintragen, deren Nutzungsbedingungen geprüft sind.
+https://www.gutefrage.net/tag/numerologie/rss
+https://www.reddit.com/r/Numerologie/new/.rss
+https://www.esoterikforum.at/forums/numerologie.98/index.rss
+https://www.astrologie-forum.de/rss
+https://www.paranormal.de/forum/external.php?type=RSS2
+"""
+FEED_ITEMS = 20  # per feed and cycle
 
 
 def qualified(row):
@@ -38,6 +56,19 @@ def qualified(row):
                 and row.get("proof", "").strip()
                 and row.get("permission") == "true"
                 and row.get("status") != "Abgesagt")
+
+
+def call_status(row):
+    """(JA|NEIN|UNGEKLÄRT, reason). Consent covers only the channel the person chose; unclear never becomes JA."""
+    if row.get("permission") != "true" or row.get("status") == "Abgesagt":
+        return "NEIN", "keine Kontaktberechtigung oder Widerruf/Sperre"
+    if not row.get("phone", "").strip():
+        return "NEIN", "keine Telefonnummer angegeben"
+    if row.get("channel") == "Telefon":
+        return "JA", "eigene Anfrage mit Einwilligung zur Kontaktaufnahme per Telefon"
+    if row.get("channel") in ("E-Mail", "Keiner"):
+        return "NEIN", f"Einwilligung gilt nur für den gewählten Kanal {row.get('channel')}"
+    return "UNGEKLÄRT", "Kontaktkanal unbekannt"
 
 
 def _replace(path, write):
@@ -56,12 +87,20 @@ def publish(rows, source_url, folder=FOLDER, now=None):
     """Writes both CSVs from the CRM rows; returns the qualified lead rows."""
     folder.mkdir(parents=True, exist_ok=True)
     checked = (now or datetime.now()).isoformat(timespec="seconds")
-    leads = [{"Lead-ID": r["id"], "Name": r["name"], "Telefonnummer": r.get("phone", ""),
-              "E-Mail-Adresse": r.get("email", ""), "Interessensnachweis": r["proof"],
-              "Quellen-URL": source_url, "Prüfdatum": checked, "Kontaktberechtigung": r["permission"],
-              "Kontaktstatus": r["status"]} for r in rows if qualified(r)]
+    leads, crm = [], []
+    for r in rows:
+        if qualified(r):
+            status, reason = call_status(r)
+            leads.append({"Lead-ID": r["id"], "Name": r["name"], "Telefonnummer": r.get("phone", ""),
+                          "E-Mail-Adresse": r.get("email", ""), "Interessensnachweis": r["proof"],
+                          "Quellen-URL": source_url, "Prüfdatum": checked, "Kontaktberechtigung": r["permission"],
+                          "Darf angerufen werden": status, "Begründung Anrufstatus": reason,
+                          "Kontaktstatus": r["status"]})
+            # The CRM schema has no call-status column; its notes field carries it.
+            r = {**r, "notes": f"Anruf: {status} ({reason}). {r.get('notes', '')}".strip()}
+        crm.append(r)
     # The CRM file keeps blocked/deleted rows too: its import needs them to block or remove old entries.
-    _replace(folder / CRM_CSV, lambda p: write_csv(p, CRM_FIELDS, rows))
+    _replace(folder / CRM_CSV, lambda p: write_csv(p, CRM_FIELDS, crm))
     _replace(folder / LEADS_CSV, lambda p: write_csv(p, FIELDS, leads))
     return leads
 
@@ -74,46 +113,105 @@ def _crm_rows(db):
         store.db.close()
 
 
-def cycle(folder=FOLDER, opener=None):
-    """One sync. Never raises: every outcome ends up as one log line without personal data."""
+def feed_links(xml_text):
+    root = ET.fromstring(xml_text)
+    atom = "{http://www.w3.org/2005/Atom}"
+    links = [i.findtext("link", "") for i in root.iter("item")]
+    links += [l.get("href", "") for e in root.iter(atom + "entry") for l in e.findall(atom + "link")
+              if l.get("rel", "alternate") == "alternate"]
+    return [u.strip() for u in links if u.strip().startswith(("https://", "http://"))][:FEED_ITEMS]
+
+
+def research_cycle(folder=FOLDER, fetch=None, delay=2.0):
+    """Returns (sources, new_signals, per-source status lines). Skipped sources are only logged."""
+    fetch = fetch or research._fetch
+    src_file = folder / SOURCES
+    if not src_file.is_file():
+        src_file.write_text(DEFAULT_SOURCES, encoding="utf-8")
+    sources = [l.strip() for l in src_file.read_text(encoding="utf-8").splitlines()
+               if l.strip() and not l.lstrip().startswith("#")]
+    status, links = [], []
+    for src in sources:
+        if not research.allowed_by_robots(src, fetch):
+            status.append(f"übersprungen: robots.txt verbietet oder unklar | {src}")
+            continue
+        try:
+            found = feed_links(fetch(src))
+        except urllib.error.HTTPError as e:
+            status.append(f"übersprungen: Server verweigert (HTTP {e.code}) | {src}")
+            continue
+        except Exception as e:
+            status.append(f"übersprungen: {type(e).__name__} | {src}")
+            continue
+        status.append(f"gelesen: {len(found)} Beiträge | {src}")
+        links += found
+    out = folder / SIGNALS_CSV
+    existing = read_csv(out) if out.is_file() else []
+    known = {s["source_url"] for s in existing}
+    new, page_log = research.collect([u for u in links if u not in known], fetch, delay)
+    status += [f"{st} | {u}" for u, st in page_log]
+    merged, _ = prepare_signals(existing + new)  # dedupe by URL
+    _replace(out, lambda p: write_csv(p, SIGNAL_FIELDS, merged))
+    return len(sources), new, status
+
+
+def cycle(folder=FOLDER, opener=None, fetch=None):
+    """One sync + research run. Never raises: each outcome ends up as one log line without personal data."""
     started = datetime.now()
-    try:
-        user = backup.setting("PA_USERNAME", "")
-        with tempfile.TemporaryDirectory(prefix="thabo-sync-") as tmp:
-            if user:
-                db, source = Path(tmp) / "leads.sqlite3", f"https://{user}.eu.pythonanywhere.com/"
-                backup.download(db, *([opener] if opener else []))
-                backup.verify(db)
-            else:
-                db, source = data_dir() / "leads.sqlite3", "lokales Kontaktformular (THABO_DATA_DIR)"
-                if not db.is_file():
-                    if not (folder / LEADS_CSV).is_file():  # header-only; never wipe leads on a config gap
-                        folder.mkdir(parents=True, exist_ok=True)
-                        _replace(folder / LEADS_CSV, lambda p: write_csv(p, FIELDS, []))
-                    return _log(folder, started, "keine Quelle: weder PythonAnywhere konfiguriert noch lokale Lead-DB", 0, 0)
-            rows = _crm_rows(db)
-        leads = publish(rows, source, folder, started)
-        return _log(folder, started, f"OK Quelle={source}", len(rows), len(leads))
-    except Exception as e:  # one failed cycle must not stop the next one; messages carry no tokens
-        return _log(folder, started, f"FEHLER {type(e).__name__}: {e}", 0, 0)
-
-
-def _log(folder, started, msg, rows, leads):
     folder.mkdir(parents=True, exist_ok=True)
-    line = f"{started.isoformat(timespec='seconds')} | {msg} | CRM-Zeilen={rows} | qualifiziert={leads}"
+    try:
+        lead_msg, rows, leads = _lead_part(folder, started, opener)
+    except Exception as e:  # one failed part must not stop the next cycle; messages carry no tokens
+        lead_msg, rows, leads = f"Leads FEHLER {type(e).__name__}: {e}", 0, []
+    try:
+        n_src, new, status = research_cycle(folder, fetch)
+        skipped = sum(s.startswith("übersprungen") for s in status[:n_src])
+        res_msg = f"Recherche: {n_src} Quellen, {skipped} übersprungen, {len(new)} neue anonyme Signale"
+        _replace(folder / LAST_RESEARCH, lambda p: Path(p).write_text(
+            f"{started.isoformat(timespec='seconds')}\n" + "\n".join(status) + "\n", encoding="utf-8"))
+    except Exception as e:
+        res_msg = f"Recherche FEHLER {type(e).__name__}: {e}"
+    call = {k: sum(l["Darf angerufen werden"] == k for l in leads) for k in ("JA", "NEIN", "UNGEKLÄRT")}
+    return _log(folder, started, f"{lead_msg} | CRM-Zeilen={rows} | qualifiziert={len(leads)} | "
+                                 f"Anruf JA/NEIN/UNGEKLÄRT={call['JA']}/{call['NEIN']}/{call['UNGEKLÄRT']} | {res_msg}")
+
+
+def _lead_part(folder, started, opener):
+    user = backup.setting("PA_USERNAME", "")
+    with tempfile.TemporaryDirectory(prefix="thabo-sync-") as tmp:
+        if user:
+            db, source = Path(tmp) / "leads.sqlite3", f"https://{user}.eu.pythonanywhere.com/"
+            backup.download(db, *([opener] if opener else []))
+            backup.verify(db)
+        else:
+            db, source = data_dir() / "leads.sqlite3", "lokales Kontaktformular (THABO_DATA_DIR)"
+            if not db.is_file():
+                # (Re)write an empty file with the current header; never wipe existing leads on a config gap.
+                if not (folder / LEADS_CSV).is_file() or not read_csv(folder / LEADS_CSV):
+                    _replace(folder / LEADS_CSV, lambda p: write_csv(p, FIELDS, []))
+                return "Leads: keine Quelle (weder PythonAnywhere noch lokale Lead-DB)", 0, []
+        rows = _crm_rows(db)
+    return f"Leads OK Quelle={source}", len(rows), publish(rows, source, folder, started)
+
+
+def _log(folder, started, msg):
+    line = f"{started.isoformat(timespec='seconds')} | {msg}"
     with open(folder / LOG, "a", encoding="utf-8") as f:
         f.write(line + "\n")
     return line
 
 
 def report(folder=FOLDER):
-    log, csv_path = folder / LOG, folder / LEADS_CSV
+    log, csv_path, sig = folder / LOG, folder / LEADS_CSV, folder / SIGNALS_CSV
     last = log.read_text(encoding="utf-8").splitlines()[-1] if log.is_file() else "noch kein Zyklus"
     count = 0
     if csv_path.is_file():
         with open(csv_path, newline="", encoding="utf-8") as f:
             count = sum(1 for _ in csv.DictReader(f))
-    return f"Letzter Zyklus: {last}\nGespeicherte Leads: {count}\nCSV: {csv_path}\nCRM-Import: {folder / CRM_CSV}"
+    signals = len(read_csv(sig)) if sig.is_file() else 0
+    detail = (folder / LAST_RESEARCH).read_text(encoding="utf-8").strip() if (folder / LAST_RESEARCH).is_file() else ""
+    return (f"Letzter Zyklus: {last}\nGespeicherte Leads: {count}\nCSV: {csv_path}\nCRM-Import: {folder / CRM_CSV}"
+            f"\nAnonyme Recherche-Signale: {signals} ({sig})\nQuellen: {folder / SOURCES}\n\nLetzte Recherche:\n{detail}")
 
 
 def run(interval=3600):

@@ -1,4 +1,4 @@
-"""Opt-in sync: qualification, both CSVs, dedup, error handling. Synthetic data only."""
+"""Sync service: qualification, call status, both CSVs, dedup, feed research, errors. Synthetic data only."""
 import csv
 import io
 import os
@@ -9,7 +9,7 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from lead_generation_ch_consumer import backup, server as srv, sync_service as sync
+from lead_generation_ch_consumer import backup, research, server as srv, sync_service as sync
 from lead_generation_ch_consumer.leads import CRM_FIELDS
 
 
@@ -62,6 +62,19 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(list(self.folder.glob("*.tmp")), [])
         self.assertIn("Gespeicherte Leads: 2", sync.report(self.folder))
 
+    def test_call_status_follows_chosen_channel(self):
+        self.assertEqual(sync.call_status(row(channel="Telefon"))[0], "JA")
+        self.assertEqual(sync.call_status(row(channel="E-Mail"))[0], "NEIN")      # phone given, but consent is for e-mail
+        self.assertEqual(sync.call_status(row(channel="Telefon", phone=""))[0], "NEIN")
+        self.assertEqual(sync.call_status(row(channel="Telefon", permission="false"))[0], "NEIN")
+        self.assertEqual(sync.call_status(row(channel="Fax"))[0], "UNGEKLÄRT")   # unclear never becomes JA
+        sync.publish([row(channel="Telefon"), row(id="TN-2", channel="E-Mail")], "u", self.folder)
+        leads = read(self.folder / sync.LEADS_CSV)
+        self.assertEqual([l["Darf angerufen werden"] for l in leads], ["JA", "NEIN"])
+        self.assertTrue(all(l["Begründung Anrufstatus"] for l in leads))
+        crm = read(self.folder / sync.CRM_CSV)
+        self.assertTrue(crm[0]["notes"].startswith("Anruf: JA"))
+
     def test_revoked_lead_disappears_from_csv(self):
         sync.publish([row()], "u", self.folder)
         sync.publish([row(permission="false", status="Abgesagt")], "u", self.folder)
@@ -77,8 +90,11 @@ class CycleTest(unittest.TestCase):
         self.env = mock.patch.dict(os.environ, {"THABO_DATA_DIR": str(self.data), "PA_USERNAME": "",
                                                 "PA_API_TOKEN": ""})
         self.env.start()
+        self.net = mock.patch.object(research, "_fetch", side_effect=OSError("offline test"))  # no real network
+        self.net.start()
 
     def tearDown(self):
+        self.net.stop()
         self.env.stop()
         self.tmp.cleanup()
 
@@ -120,6 +136,41 @@ class CycleTest(unittest.TestCase):
             self.assertNotIn("synthetic-token", (self.folder / sync.LOG).read_text(encoding="utf-8"))
         # a failed cycle leaves the last good CSVs in place
         self.assertEqual(len(read(self.folder / sync.CRM_CSV)), 1)
+
+
+class ResearchTest(unittest.TestCase):
+    """Fake web: host a allows bots and has a feed, host b forbids by robots.txt, host c answers 403."""
+    RSS = ("<rss><channel><item><link>https://a.example.invalid/q/1</link></item>"
+           "<item><link>https://a.example.invalid/q/2</link></item></channel></rss>")
+    PAGES = {"https://a.example.invalid/q/1": "<p>Was kostet eine persönliche Numerologie Analyse? Mail: x@example.invalid</p>",
+             "https://a.example.invalid/q/2": "<p>Ich suche jemanden für meine Lebenszahl Auswertung in Zürich.</p>"}
+
+    def fetch(self, url):
+        if url.endswith("/robots.txt"):
+            return "User-agent: *\nDisallow: /" if "b.example" in url else "User-agent: *\nAllow: /"
+        if "c.example" in url:
+            raise urllib.error.HTTPError(url, 403, "Forbidden", {}, io.BytesIO())
+        return self.RSS if url.endswith("/feed") else self.PAGES[url]
+
+    def test_feed_research_is_anonymous_dedupes_and_skips_forbidden_sources(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d)
+            (folder / sync.SOURCES).write_text("# Kommentar\nhttps://a.example.invalid/feed\n"
+                                               "https://b.example.invalid/feed\nhttps://c.example.invalid/feed\n",
+                                               encoding="utf-8")
+            n, new, status = sync.research_cycle(folder, self.fetch, delay=0)
+            self.assertEqual((n, len(new)), (3, 2))
+            self.assertIn("robots.txt verbietet", status[1])
+            self.assertIn("HTTP 403", status[2])
+            raw = (folder / sync.SIGNALS_CSV).read_text(encoding="utf-8")
+            self.assertNotIn("x@example.invalid", raw)  # contact data never stored
+            self.assertEqual(sync.research_cycle(folder, self.fetch, delay=0)[1], [])  # no duplicates
+
+    def test_default_sources_file_created(self):
+        with tempfile.TemporaryDirectory() as d:
+            n, new, status = sync.research_cycle(Path(d), lambda url: (_ for _ in ()).throw(OSError()), delay=0)
+            self.assertEqual(n, 5)
+            self.assertTrue(all(s.startswith("übersprungen") for s in status))
 
 
 if __name__ == "__main__":
