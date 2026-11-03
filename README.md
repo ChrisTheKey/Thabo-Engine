@@ -247,7 +247,48 @@ Inhaltlich waren die Beiträge:
 
 Kein Konto sucht einen persönlichen Report, und keines hat eine Kontakterlaubnis gegeben. Ergebnis: **0 Interessenten, 0 Leads.**
 
-**Blocker:** Es gibt keine deutschsprachige Numerologie-Quelle, die einen automatisierten Abruf erlaubt **und** Kaufinteressenten mit Kontakterlaubnis liefert. Die nutzbaren Fediverse-Feeds enthalten Anbieter, Skeptiker und Nachrichten. Selbst wenn es eine gäbe: Öffentliche Beiträge sind pseudonym und liefern nur anonyme Signale. Name und Kontaktdaten über search.ch zu ergänzen, wäre die verbotene Verknüpfung von Verzeichnisdaten mit Interessensprofilen.
+### Käufer von Anbietern unterscheiden, Bluesky-Suche (TF-NUMEROLOGY-013, 03.11.2026)
+
+**Kategorien:** `score_signal` erkennt jetzt Anbieter/Werbung und Nachrichten/Unterhaltung, **bevor** Kauf-Signale geprüft werden. Vorher galt „Jetzt meine Beratung buchen“ als Preisanfrage mit Score 95. Jedes Signal bekommt in `product_fit` eine Kategorie: Kaufinteresse, allgemeines Interesse, Anbieter/Werbung oder Nachrichten/Unterhaltung. Diese Signale wurden als Anbieter erkannt:
+
+- Werbe-Imperative mit „!“
+- „mein(e) …-Beratung/Buch/Kurs“
+- Rabatt und Gutscheine
+- 👉
+- Shop-Links auf Numerologie-Seiten
+
+„Ich möchte jetzt eine Analyse buchen“ bleibt Kaufinteresse. Kurze Beiträge (bis 300 Zeichen) werden als Ganzes bewertet.
+
+**Neue Quellen:**
+
+| Quelle | Ergebnis |
+|---|---|
+| Bluesky-Suche `api.bsky.app/xrpc/app.bsky.feed.searchPosts` | **nutzbar**: öffentlich, ohne Login, robots.txt erlaubt den Abruf. Die Developer Guidelines verbieten Spam und automatisierte Aktionen, die Nutzer benachrichtigen. Lesen schränken sie nicht ein. Die Nutzungsbedingungen (Stand 14.08.2025) enthalten keine Klausel gegen automatisierten Abruf. |
+| `public.api.bsky.app` | HTTP 403 |
+| Lemmy-Suche (feddit.org, lemmy.world) | 0 bis 1 Treffer, nicht eingebunden |
+
+Gesucht werden die Käufer-Formulierungen „numerologie“, „lebenszahl“, „numerologie beratung“, „lebensweg analyse“ und „numerologie kosten“, jeweils deutsch, neueste zuerst. Das Anfragedatum (`posted_at`) kommt aus dem Feed oder der API.
+
+**Echter Zyklus (19:27):**
+
+- 14 Quellen, davon 9 gelesen
+- 62 Beiträge, 43 mit Numerologie-Bezug
+- 26 neue Signale, **0 mit Kaufinteresse**
+
+Über alle 38 Signale: 35 allgemeines Interesse, 3 Anbieter/Werbung, 0 Kaufinteresse, 0 mit Schweiz-Bezug.
+
+Die Stichprobe an den Originaltexten zeigte:
+
+- kein Anbieter als Käufer eingestuft
+- keine echte Kaufanfrage dabei
+- typische Beiträge: „Meine Lebenszahl ist die 9“, Zahlendeutungen, Esoterik-Werbung, Verschwörungsposts
+
+**Einschränkungen:**
+
+- Bluesky-Signale speichern die Beitrags-URL mit der DID des Kontos, also ein Pseudonym. Gelöschte Beiträge bleiben in der lokalen Übersicht stehen, bis man sie manuell entfernt.
+- Die Fediverse-Signale aus 011 wurden mit der alten Satzauswahl gespeichert und erscheinen teils als „allgemein“ statt als Nachrichten.
+
+**Blocker:** Es gibt keine deutschsprachige Numerologie-Quelle, die einen automatisierten Abruf erlaubt **und** Kaufinteressenten mit Kontakterlaubnis liefert. Selbst ein echter Kaufinteressent auf Bluesky wäre kein Lead: Eine öffentliche Erwähnung ist keine Kontaktberechtigung, und eine Direktnachricht wäre eine unaufgeforderte Werbebotschaft. Die nutzbaren Fediverse-Feeds enthalten Anbieter, Skeptiker und Nachrichten. Selbst wenn es eine gäbe: Öffentliche Beiträge sind pseudonym und liefern nur anonyme Signale. Name und Kontaktdaten über search.ch zu ergänzen, wäre die verbotene Verknüpfung von Verzeichnisdaten mit Interessensprofilen.
 
 Beide CSVs werden in jedem Zyklus vollständig und atomar aus der Datenbank neu geschrieben. Dadurch:
 

@@ -19,11 +19,13 @@ import urllib.robotparser
 from datetime import date
 from pathlib import Path
 
-from .leads import EMAIL_RE, PHONE_RE, SIGNAL_FIELDS, prepare_signals, read_csv, score_signal, write_csv
+from .leads import (EMAIL_RE, PHONE_RE, SIGNAL_FIELDS, prepare_signals, read_csv, score_signal, signal_category,
+                    write_csv)
 
 USER_AGENT = "ThaboResearchBot/1.0 (+manual review; respects robots.txt)"
 TOPIC_RE = re.compile(r"[^.!?\n]*(numerolog|lebenszahl|geburtszahl|schicksalszahl)[^.!?\n]*[.!?]?", re.I)
-HANDLE_RE = re.compile(r"@\w{2,}")
+HANDLE_RE = re.compile(r"@[\w.-]{2,}")  # whole handle incl. instance/domain (@name.bsky.social)
+DATE_RE = re.compile(r"\b\d{1,2}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{2,4}\b")  # birth dates are common in numerology posts
 SWISS_RE = re.compile(r"\b(schweiz|zürich|zuerich|bern|basel|luzern|st\.? ?gallen|winterthur|aargau|"
                       r"thurgau|solothurn|graubünden|zug|schwyz|chf)\b", re.I)
 
@@ -50,7 +52,7 @@ def page_text(raw_html):
 
 
 def anonymize(text):
-    return HANDLE_RE.sub("[…]", PHONE_RE.sub("[…]", EMAIL_RE.sub("[…]", text)))
+    return DATE_RE.sub("[Datum]", HANDLE_RE.sub("[…]", PHONE_RE.sub("[…]", EMAIL_RE.sub("[…]", text))))
 
 
 def extract_signal(url, raw_html, today=None):
@@ -59,7 +61,10 @@ def extract_signal(url, raw_html, today=None):
     sentences = [m.group(0).strip() for m in TOPIC_RE.finditer(text)]
     if not sentences:
         return None
-    best = max(sentences, key=lambda s: score_signal(s)[0])
+    # A short post is scored as a whole, so an ad phrase in another sentence still marks it as provider.
+    # shortcut: longer pages use their best sentence only; ad phrases elsewhere on the page are missed.
+    best = max(sentences, key=lambda s: score_signal(s)[0])  # only this sentence is stored (data minimisation)
+    judged = text.strip() if len(text.strip()) <= 300 else best
     swiss = SWISS_RE.search(text) or urllib.parse.urlsplit(url).hostname.endswith(".ch")
     return {
         "signal_id": "SIG-" + hashlib.sha256(url.encode()).hexdigest()[:12].upper(),
@@ -68,7 +73,7 @@ def extract_signal(url, raw_html, today=None):
         "found_at": (today or date.today()).isoformat(),
         "posted_at": "",
         "need_summary": anonymize(best)[:300],
-        "product_fit": "persönlicher Report" if score_signal(best)[0] >= 70 else "unklar",
+        "product_fit": signal_category(score_signal(anonymize(judged))[0]),
         # Only a hint; residence needs human verification (German text alone proves nothing).
         "geo_evidence": "Hinweis: CH-Bezug im Text/Domain – manuell prüfen" if swiss else "kein CH-Beleg",
         "anon_ref": "",

@@ -184,6 +184,28 @@ class ResearchTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             sync.feed_items(bomb)
 
+    def test_bluesky_search_and_post_dates(self):
+        api = ('{"posts": [{"uri": "at://did:plc:abc/app.bsky.feed.post/3k1", "record": {"text": '
+               '"Suche jemanden, der mir eine Lebenszahl-Analyse erstellt", "createdAt": "2026-11-02T10:00:00.000Z"}},'
+               '{"uri": "at://did:plc:def/app.bsky.feed.post/3k2", "record": {"text": "Jetzt meine Numerologie-Beratung '
+               'buchen!", "createdAt": "2026-11-01T09:00:00Z"}}, {"uri": "kaputt", "record": {}}]}')
+        items = sync.bsky_items(api)
+        self.assertEqual(items[0], ("https://bsky.app/profile/did:plc:abc/post/3k1",
+                                    "Suche jemanden, der mir eine Lebenszahl-Analyse erstellt", "2026-11-02"))
+        self.assertEqual(len(items), 2)
+        self.assertEqual(sync.feed_items(
+            "<rss><channel><item><link>https://a.example.invalid/1</link><description>x</description>"
+            "<pubDate>Mon, 02 Nov 2026 10:00:00 +0000</pubDate></item></channel></rss>")[0][2], "2026-11-02")
+        with tempfile.TemporaryDirectory() as d:
+            src = "https://api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=lebenszahl"
+            (Path(d) / sync.SOURCES).write_text(src + "\n", encoding="utf-8")
+            fetch = lambda u: "User-agent: *\nAllow: /" if u.endswith("/robots.txt") else api
+            n, new, status = sync.research_cycle(Path(d), fetch)
+            cats = {s["product_fit"] for s in new}
+            self.assertEqual(cats, {"Kaufinteresse", "Anbieter/Werbung"})  # the ad is not counted as a buyer
+            self.assertEqual({s["posted_at"] for s in new}, {"2026-11-02", "2026-11-01"})
+            self.assertIn("Kaufinteresse 1", status[0])
+
     def test_malformed_item_urls_do_not_block_other_sources(self):
         bad = ("<rss><channel><item><link>https:///kein-host</link><description>Numerologie</description></item>"
                "<item><link>http://[zerbrochen</link><description>Numerologie</description></item></channel></rss>")
@@ -199,7 +221,7 @@ class ResearchTest(unittest.TestCase):
     def test_default_sources_file_created(self):
         with tempfile.TemporaryDirectory() as d:
             n, new, status = sync.research_cycle(Path(d), lambda url: (_ for _ in ()).throw(OSError()))
-            self.assertEqual(n, 9)
+            self.assertEqual(n, 14)
             self.assertTrue(all(s.startswith("übersprungen") for s in status))
 
 

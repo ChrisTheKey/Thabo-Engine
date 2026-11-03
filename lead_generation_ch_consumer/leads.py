@@ -63,17 +63,33 @@ def score_signal(text):
     """Heuristic 0-100 research score with reasons. Not a purchase probability,
     and never a contact permission."""
     t = text.lower()
-    numerology = re.search(r"numerolog|lebenszahl|geburtszahl|schicksalszahl|seelenzahl", t)
+    numerology = re.search(r"num[eé]rolog|lebenszahl|geburtszahl|schicksalszahl|seelenzahl", t)
     personal = re.search(r"\b(mein|meine|meiner|mir|mich|ich)\b|persönlich|individuell|geburtsdatum", t)
     buy = re.search(r"kost|preis|kaufen|bestell|buchen|chf|fr\.", t)
     seek = re.search(r"suche|wer (erstellt|macht)|anbieter|empfehl|wo kann ich|gibt es jemand", t)
     business = re.search(r"wiederverk|grosshandel|großhandel|agentur|b2b|für meine kunden|reseller", t)
+    # Self-promotion beats any buying word ("jetzt buchen" is an ad, not a booking request).
+    # "jetzt … buchen" only as an ad imperative with "!", so "ich möchte jetzt eine Analyse buchen" stays a buyer.
+    provider = re.search(r"\bich biete\b|\bbiete\b.{0,40}\ban\b|jetzt (buchen|bestellen|erhältlich|anmelden)|"
+                         r"jetzt\b[^.?!]{0,40}\b(buchen|bestellen|anmelden|sichern)\s*!|termin buchen|"
+                         r"buchen sie|buch(e|t) (jetzt|dir|deine)|\bmein(e|em|en)? (neues |aktuelles )?[\w-]*(buch|angebot|"
+                         r"praxis|beratung|kurs|shop|e-book|webinar|workshop|reading)\b|"
+                         r"unser(e|em)? [\w-]*(angebot|beratung|kurs|shop)\b|"
+                         r"rabatt|gutschein|link in (der )?bio|dm für|\bce livre\b|découvrez|en savoir plus|👉|"
+                         r"\b[\w-]+\.(de|ch|at|com|net|shop)/[\w/.-]*numerolog|"  # shop/landing link on numerology
+                         r"\bmy (new )?(book|course|shop|readings?)\b|book (now|a reading)", t)
+    news = re.search(r"podcast|artikel|zeitung|studie|\bbericht|interview|\bnews\b|📰|\bfolge \d|sendung|"
+                     r"journal|magazin|reportage", t)
     reasons = []
     if not numerology:
         return 0, ["kein Numerologie-Bezug"]
     reasons.append("Numerologie-Bezug")
     if business:
         return 10, reasons + ["gewerblicher Bedarf, kein Einzelkäufer"]
+    if provider:
+        return 5, reasons + ["Anbieter/Werbung, kein Käufer"]
+    if news:
+        return 15, reasons + ["Nachrichten/Unterhaltung"]
     if buy and personal:
         score, r = 95, "Preis-/Bestellanfrage für persönliche Auswertung"
     elif seek and personal:
@@ -83,6 +99,19 @@ def score_signal(text):
     else:
         score, r = 20, "allgemeines Interesse"
     return score, reasons + [r]
+
+
+STICKY = {"Anbieter/Werbung": (5, ["Numerologie-Bezug", "Anbieter/Werbung, kein Käufer"]),
+          "Nachrichten/Unterhaltung": (15, ["Numerologie-Bezug", "Nachrichten/Unterhaltung"])}
+
+
+def signal_category(score):
+    """Category for the research overview; derived from score_signal's fixed tiers."""
+    if score >= 70:
+        return "Kaufinteresse"
+    if score >= 20:
+        return "allgemeines Interesse"
+    return {15: "Nachrichten/Unterhaltung", 10: "Anbieter/Werbung", 5: "Anbieter/Werbung"}.get(score, "kein Bezug")
 
 
 def validate_signal(s):
@@ -108,6 +137,9 @@ def prepare_signals(signals):
             bad.append((s, errs))
             continue
         score, reasons = score_signal(s.get("need_summary", ""))
+        # A provider/news verdict from the whole post outlives re-scoring of the stored sentence alone.
+        if s.get("product_fit") in STICKY:
+            score, reasons = STICKY[s["product_fit"]]
         ok.append({**s, "score": score, "score_reasons": "; ".join(reasons)})
     return ok, bad
 

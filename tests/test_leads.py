@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from lead_generation_ch_consumer.leads import (CRM_FIELDS, can_contact, prepare_signals,
-                                               read_csv, score_signal, to_crm_rows,
+                                               read_csv, score_signal, signal_category, to_crm_rows,
                                                validate_opt_in, write_csv)
 
 
@@ -30,6 +30,25 @@ class ScoringTest(unittest.TestCase):
 
     def test_business_not_prioritised(self):
         self.assertLess(score_signal("Wiederverkauf: was kostet Numerologie-Report für meine Kunden")[0], 40)
+
+    def test_providers_and_news_never_buyers(self):
+        providers = ["Jetzt meine Numerologie-Beratung buchen! Was kostet sie? Nur CHF 90 für dich.",
+                     "Ich biete persönliche Lebenszahl-Analysen an, Termin buchen per DM.",
+                     "Mein neues Buch über Numerologie ist da – Rabatt mit Gutschein LEBEN10",
+                     "Ihr persönlicher Schutzengel auf Basis der Numerologie! beispiel.de/numerologie/schutzengel",
+                     "Dein Geburtsdatum ist kein Zufall. 👉 Berechne deine Lebenszahl",
+                     "Ce livre vous invite à explorer la numérologie. Découvrez vos nombres!"]
+        for t in providers:
+            self.assertEqual(signal_category(score_signal(t)[0]), "Anbieter/Werbung", t)
+        for t in ["Im Podcast sprechen wir über Numerologie – alles Zahlenzauber?",
+                  "📰 Artikel: Esoterische Finanz-Communities und Numerologie"]:
+            self.assertEqual(signal_category(score_signal(t)[0]), "Nachrichten/Unterhaltung", t)
+        for t in ["Was kostet eine persönliche Numerologie-Auswertung für mich?",
+                  "Suche jemanden, der mir eine Lebenszahl-Analyse erstellt",
+                  "Wer erstellt mir einen Numerologie-Report zu meinem Geburtsdatum?",
+                  "Ich möchte jetzt eine persönliche Lebenszahl-Analyse buchen, was kostet das?"]:
+            self.assertEqual(signal_category(score_signal(t)[0]), "Kaufinteresse", t)
+        self.assertEqual(signal_category(score_signal("Numerologie ist spannend")[0]), "allgemeines Interesse")
 
     def test_reproducible_with_reasons(self):
         t = "Wo kann ich eine individuelle Numerologie-Analyse bestellen?"
