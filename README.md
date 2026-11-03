@@ -8,7 +8,7 @@ Lokales CRM für private Einzelkäufer persönlicher Numerologie-Reports (Fokus:
 
 | Pfad | Zweck |
 |---|---|
-| `numerology-crm/index.html` | Einzeldatei-CRM. Die Daten bleiben im `localStorage` des Browsers. CSV-Import/-Export, JSON-Backup, Filter nach Kontaktfreigabe |
+| `numerology-crm/index.html` | Einzeldatei-CRM mit zwei getrennten Bereichen: Einzelkunden und B2B-Vertriebspartner (je eigener `localStorage`-Schlüssel und eigene Statistik). Die Daten bleiben im Browser. CSV-Import/-Export, JSON-Backup (nur Einzelkunden), Filter nach Kontaktfreigabe |
 | `lead_generation_ch_consumer/leads.py` | Validierung, Scoring, Deduplizierung, Kontaktfreigabe, CRM-CSV-Export |
 | `numerology-landing/` | Mobiloptimierte Landingpage mit Anfrageformular, Datenschutzhinweisen und Widerruf |
 | `lead_generation_ch_consumer/server.py` | Backend für die Landingpage: Validierung, Einwilligungsnachweis, Spam-Schutz, SQLite ausserhalb des Repos, CRM-Export |
@@ -352,7 +352,9 @@ Verworfene Alternativen:
 **Dateien** (Server: `~/thabo-b2b/data`, Rechte nur für den Besitzer). Die Privatkunden-Dateien bleiben unberührt.
 
 - `numerology_b2b_leads.csv`: alle Felder
-- `numerology_b2b_crm_import.csv`: Format des bestehenden CRM-Imports, mit `permission=false` und Kanal „Keiner“
+- `numerology_b2b_crm_import.csv`: älteres Einzelkunden-Importformat. Der Einzelkunden-Bereich des CRM lehnt diese Datei ab, damit B2B-Partner nicht in der Privatkundenstatistik landen.
+
+**Ins CRM übernehmen:** Im CRM den Reiter **B2B-Vertriebspartner** öffnen, dann **B2B-CSV importieren** und `numerology_b2b_leads.csv` wählen. Wird dieselbe Datei erneut importiert, überspringt das CRM vorhandene Partner (gleiche Lead-ID, E-Mail oder Telefonnummer). Manuelle Änderungen bleiben dabei erhalten. Im B2B-Bereich lässt sich nach Firma, Ort, Telefon (auch `044 …` statt `+41 44 …`) und E-Mail suchen sowie nach Kontakt- und Partnerstatus filtern. Über **Bearbeiten** lassen sich Kontaktdaten, Partner- und Kontaktstatus samt Begründung, nächster Schritt und Gesprächsnotizen ändern. **B2B-CSV exportieren** dient als Sicherung inklusive Notizen und nächstem Schritt, denn das JSON-Backup umfasst nur Einzelkunden.
 - `b2b_zyklen.log`: eine Zeile pro Zyklus, ohne Kontaktdaten
 
 **Betrieb auf dem Server:**

@@ -126,6 +126,29 @@ class CsvTest(unittest.TestCase):
         html = (Path(__file__).parents[1] / "numerology-crm" / "index.html").read_text(encoding="utf-8")
         self.assertIn("const fields=" + str(CRM_FIELDS).replace(" ", ""), html)
 
+    def test_crm_reimport_skips_known_id(self):
+        # a re-import of the same lead ID must be skipped even if phone/email were edited in the CRM
+        html = (Path(__file__).parents[1] / "numerology-crm" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("let duplicate=!!ex||", html)
+
+    def test_crm_b2b_area_matches_b2b_csv_and_has_own_storage(self):
+        from lead_generation_ch_consumer.b2b import FIELDS
+        html = (Path(__file__).parents[1] / "numerology-crm" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("b2bFields=[" + ",".join(f"'{f}'" for f in FIELDS) + "]", html)
+        self.assertIn("const KEY='thabo_numerology_crm_v1'", html)  # private customers keep their key
+        self.assertIn("const B2B_KEY='thabo_numerology_b2b_v1'", html)
+
+    def test_crm_b2b_editable_fields_have_form_inputs(self):
+        import re
+        html = (Path(__file__).parents[1] / "numerology-crm" / "index.html").read_text(encoding="utf-8")
+        editable = re.search(r"b2bEditable=\[([^\]]*)\]", html).group(1)
+        names = re.findall(r"'([^']+)'", editable)
+        self.assertIn("Notizen", names)
+        self.assertIn("Nächster Schritt", names)
+        form = html[html.index('<form id="b2bform">'):html.index("</form>", html.index('<form id="b2bform">'))]
+        for name in names + ["Lead-ID"]:
+            self.assertIn(f'name="{name}"', form)
+
 
 if __name__ == "__main__":
     unittest.main()
